@@ -65,8 +65,7 @@ pub(crate) async fn add_note(
         ));
     }
 
-    // 外部キー違反を 500 にせず、利用者が理解できる 404 に変えるため先に存在確認する。
-    repository::find_book(pool, book_id).await?;
+    // repository の単一 SQL が、存在確認と追加の間に削除が割り込む競合も 404 にする。
     repository::insert_note(pool, book_id, body).await
 }
 
@@ -81,4 +80,48 @@ pub(crate) async fn update_status(
 
 pub(crate) async fn delete_book(pool: &SqlitePool, book_id: BookId) -> Result<(), AppError> {
     repository::delete_book(pool, book_id).await
+}
+
+#[cfg(test)]
+mod tests {
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    use super::*;
+
+    fn lazy_pool() -> SqlitePool {
+        // 検証が DB より先に走ることも、接続しない pool によって確認できる。
+        SqlitePoolOptions::new()
+            .connect_lazy("sqlite::memory:")
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn create_book_rejects_a_blank_title_before_accessing_the_database() {
+        let error = create_book(
+            &lazy_pool(),
+            CreateBook {
+                title: "  ".to_owned(),
+                author: "Author".to_owned(),
+            },
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, AppError::Validation(_)));
+    }
+
+    #[tokio::test]
+    async fn add_note_rejects_a_blank_body_before_accessing_the_database() {
+        let error = add_note(
+            &lazy_pool(),
+            BookId(1),
+            AddNote {
+                body: "\t".to_owned(),
+            },
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, AppError::Validation(_)));
+    }
 }

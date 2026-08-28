@@ -77,3 +77,22 @@ pub(crate) struct BookDetail {
     pub(crate) book: Book,
     pub(crate) notes: Vec<Note>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn converts_a_stored_status_to_the_domain_enum() {
+        assert_eq!(
+            ReadingStatus::try_from("reading").unwrap(),
+            ReadingStatus::Reading
+        );
+    }
+
+    #[test]
+    fn rejects_an_unknown_status_from_the_database() {
+        let error = ReadingStatus::try_from("paused").unwrap_err();
+        assert!(matches!(error, AppError::InvalidStoredValue(_)));
+    }
+}

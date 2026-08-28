@@ -117,14 +117,17 @@ pub(crate) async fn insert_note(
     let row = sqlx::query_as::<_, NoteRow>(
         r#"
         INSERT INTO notes (book_id, body)
-        VALUES (?, ?)
+        SELECT ?, ?
+        WHERE EXISTS (SELECT 1 FROM books WHERE id = ?)
         RETURNING id, body
         "#,
     )
     .bind(book_id.0)
     .bind(body)
-    .fetch_one(pool)
-    .await?;
+    .bind(book_id.0)
+    .fetch_optional(pool)
+    .await?
+    .ok_or(AppError::NotFound)?;
 
     Ok(row.into())
 }
@@ -162,4 +165,16 @@ pub(crate) async fn delete_book(pool: &SqlitePool, id: BookId) -> Result<(), App
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn inserting_a_note_for_an_unknown_book_returns_not_found(pool: SqlitePool) {
+        let error = insert_note(&pool, BookId(999), "note").await.unwrap_err();
+
+        assert!(matches!(error, AppError::NotFound));
+    }
 }
