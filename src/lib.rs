@@ -9,4 +9,4 @@ mod handler;
 mod repository;
 mod service;
 
-pub use app::build_app;
+pub use app::{build_app, connect_database};

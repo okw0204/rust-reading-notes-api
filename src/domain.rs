@@ -1,13 +1,17 @@
 //! HTTP や SQLite の表現から独立した、アプリケーションの中心的な型です。
 
 use chrono::NaiveDateTime;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(transparent)]
 pub(crate) struct BookId(pub(crate) i64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+pub(crate) struct NoteId(pub(crate) i64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -60,4 +64,18 @@ pub(crate) struct Book {
     pub(crate) author: String,
     pub(crate) status: ReadingStatus,
     pub(crate) created_at: NaiveDateTime,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct Note {
+    pub(crate) id: NoteId,
+    pub(crate) book_id: BookId,
+    pub(crate) body: String,
+    pub(crate) created_at: NaiveDateTime,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct BookDetail {
+    pub(crate) book: Book,
+    pub(crate) notes: Vec<Note>,
 }

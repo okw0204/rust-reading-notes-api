@@ -2,16 +2,16 @@
 
 use axum::{
     Json,
-    extract::{Query, State},
+    extract::{Path, Query, State},
     http::StatusCode,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
     app::AppState,
-    domain::{Book, BookId, ReadingStatus},
+    domain::{Book, BookDetail, BookId, Note, NoteId, ReadingStatus},
     error::AppError,
-    service::{self, CreateBook},
+    service::{self, AddNote, CreateBook, UpdateStatus},
 };
 
 #[derive(Deserialize)]
@@ -25,12 +25,35 @@ pub(crate) struct ListBooksQuery {
     status: Option<String>,
 }
 
+#[derive(Deserialize)]
+pub(crate) struct AddNoteRequest {
+    body: String,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct UpdateStatusRequest {
+    status: String,
+}
+
 #[derive(Serialize)]
 pub(crate) struct BookResponse {
     id: BookId,
     title: String,
     author: String,
     status: ReadingStatus,
+}
+
+#[derive(Serialize)]
+pub(crate) struct NoteResponse {
+    id: NoteId,
+    body: String,
+}
+
+#[derive(Serialize)]
+pub(crate) struct BookDetailResponse {
+    #[serde(flatten)]
+    book: BookResponse,
+    notes: Vec<NoteResponse>,
 }
 
 impl From<Book> for BookResponse {
@@ -41,6 +64,26 @@ impl From<Book> for BookResponse {
             title: book.title,
             author: book.author,
             status: book.status,
+        }
+    }
+}
+
+impl From<Note> for NoteResponse {
+    fn from(note: Note) -> Self {
+        let _book_id = note.book_id;
+        let _created_at = note.created_at;
+        Self {
+            id: note.id,
+            body: note.body,
+        }
+    }
+}
+
+impl From<BookDetail> for BookDetailResponse {
+    fn from(detail: BookDetail) -> Self {
+        Self {
+            book: detail.book.into(),
+            notes: detail.notes.into_iter().map(NoteResponse::from).collect(),
         }
     }
 }
@@ -68,4 +111,45 @@ pub(crate) async fn list_books(
 ) -> Result<Json<Vec<BookResponse>>, AppError> {
     let books = service::list_books(&state.pool, query.status).await?;
     Ok(Json(books.into_iter().map(BookResponse::from).collect()))
+}
+
+pub(crate) async fn get_book(
+    State(state): State<AppState>,
+    Path(id): Path<BookId>,
+) -> Result<Json<BookDetailResponse>, AppError> {
+    let detail = service::get_book(&state.pool, id).await?;
+    Ok(Json(detail.into()))
+}
+
+pub(crate) async fn add_note(
+    State(state): State<AppState>,
+    Path(book_id): Path<BookId>,
+    Json(request): Json<AddNoteRequest>,
+) -> Result<(StatusCode, Json<NoteResponse>), AppError> {
+    let note = service::add_note(&state.pool, book_id, AddNote { body: request.body }).await?;
+    Ok((StatusCode::CREATED, Json(note.into())))
+}
+
+pub(crate) async fn update_status(
+    State(state): State<AppState>,
+    Path(book_id): Path<BookId>,
+    Json(request): Json<UpdateStatusRequest>,
+) -> Result<Json<BookResponse>, AppError> {
+    let book = service::update_status(
+        &state.pool,
+        book_id,
+        UpdateStatus {
+            status: request.status,
+        },
+    )
+    .await?;
+    Ok(Json(book.into()))
+}
+
+pub(crate) async fn delete_book(
+    State(state): State<AppState>,
+    Path(book_id): Path<BookId>,
+) -> Result<StatusCode, AppError> {
+    service::delete_book(&state.pool, book_id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }

@@ -12,6 +12,8 @@ use thiserror::Error;
 pub(crate) enum AppError {
     #[error("{0}")]
     Validation(String),
+    #[error("resource not found")]
+    NotFound,
     #[error("database error: {0}")]
     Database(#[from] sqlx::Error),
     #[error("invalid value stored in database: {0}")]
@@ -33,6 +35,11 @@ impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, code, message) = match self {
             Self::Validation(message) => (StatusCode::BAD_REQUEST, "validation_error", message),
+            Self::NotFound => (
+                StatusCode::NOT_FOUND,
+                "not_found",
+                "resource not found".to_owned(),
+            ),
             Self::Database(error) => {
                 tracing::error!(%error, "database operation failed");
                 (
