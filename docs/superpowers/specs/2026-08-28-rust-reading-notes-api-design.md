@@ -30,7 +30,7 @@ Rust Book を一通り読んだ学習者が、Web リクエストの入口から
 
 ## データモデル
 
-`BookId`と`NoteId`は整数を包む newtype とする。読書状態は`ReadingStatus::{WantToRead, Reading, Finished}`で表し、SQLite には`want_to_read`、`reading`、`finished`という文字列で保存する。
+`BookId`と`NoteId`は整数を包む newtype とする。読書状態は`ReadingStatus::{WantToRead, Reading, Finished}`で表し、SQLite には`want_to_read`、`reading`、`finished`という文字列で保存する。現在の API で使わない作成日時は DB に保持するが、ドメイン型へは読み込まない。
 
 `books`は`id`、`title`、`author`、`status`、`created_at`を持つ。`notes`は`id`、`book_id`、`body`、`created_at`を持ち、`book_id`には`ON DELETE CASCADE`付きの外部キーを設定する。
 

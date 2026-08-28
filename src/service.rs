@@ -21,10 +21,7 @@ pub(crate) struct UpdateStatus {
     pub(crate) status: String,
 }
 
-pub(crate) async fn create_book(
-    pool: &SqlitePool,
-    input: CreateBook,
-) -> Result<Book, AppError> {
+pub(crate) async fn create_book(pool: &SqlitePool, input: CreateBook) -> Result<Book, AppError> {
     let title = input.title.trim();
     if title.is_empty() {
         return Err(AppError::Validation("title must not be empty".to_owned()));
@@ -42,9 +39,10 @@ pub(crate) async fn list_books(
     pool: &SqlitePool,
     status: Option<String>,
 ) -> Result<Vec<Book>, AppError> {
+    // Option<Result<T, E>> を Result<Option<T>, E> に裏返すと、? で検証失敗を返せる。
     let status = status
         .as_deref()
-        .map(crate::domain::ReadingStatus::parse_filter)
+        .map(crate::domain::ReadingStatus::parse_input)
         .transpose()?;
     repository::list_books(pool, status).await
 }
@@ -77,7 +75,7 @@ pub(crate) async fn update_status(
     book_id: BookId,
     input: UpdateStatus,
 ) -> Result<Book, AppError> {
-    let status = ReadingStatus::parse_filter(&input.status)?;
+    let status = ReadingStatus::parse_input(&input.status)?;
     repository::update_book_status(pool, book_id, status).await
 }
 

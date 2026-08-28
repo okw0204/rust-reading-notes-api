@@ -58,24 +58,26 @@ pub(crate) struct BookDetailResponse {
 
 impl From<Book> for BookResponse {
     fn from(book: Book) -> Self {
-        let _created_at = book.created_at;
+        // DB 由来のドメイン型から、HTTP で公開する DTO へ所有権ごと移す。
+        let Book {
+            id,
+            title,
+            author,
+            status,
+        } = book;
         Self {
-            id: book.id,
-            title: book.title,
-            author: book.author,
-            status: book.status,
+            id,
+            title,
+            author,
+            status,
         }
     }
 }
 
 impl From<Note> for NoteResponse {
     fn from(note: Note) -> Self {
-        let _book_id = note.book_id;
-        let _created_at = note.created_at;
-        Self {
-            id: note.id,
-            body: note.body,
-        }
+        let Note { id, body } = note;
+        Self { id, body }
     }
 }
 

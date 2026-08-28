@@ -1,9 +1,9 @@
 //! 内部の失敗を、クライアントへ返す一貫した HTTP エラーへ変換します。
 
 use axum::{
+    Json,
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 use serde::Serialize;
 use thiserror::Error;

@@ -1,6 +1,5 @@
 //! SQL とドメイン型の変換を担当するデータアクセス層です。
 
-use chrono::NaiveDateTime;
 use sqlx::{FromRow, SqlitePool};
 
 use crate::{
@@ -9,20 +8,18 @@ use crate::{
 };
 
 #[derive(FromRow)]
+// SQLx が復元する DB 表現を、公開したいドメイン型から分離する。
 struct BookRow {
     id: i64,
     title: String,
     author: String,
     status: String,
-    created_at: NaiveDateTime,
 }
 
 #[derive(FromRow)]
 struct NoteRow {
     id: i64,
-    book_id: i64,
     body: String,
-    created_at: NaiveDateTime,
 }
 
 impl TryFrom<BookRow> for Book {
@@ -34,7 +31,6 @@ impl TryFrom<BookRow> for Book {
             title: row.title,
             author: row.author,
             status: ReadingStatus::try_from(row.status.as_str())?,
-            created_at: row.created_at,
         })
     }
 }
@@ -43,9 +39,7 @@ impl From<NoteRow> for Note {
     fn from(row: NoteRow) -> Self {
         Self {
             id: NoteId(row.id),
-            book_id: BookId(row.book_id),
             body: row.body,
-            created_at: row.created_at,
         }
     }
 }
@@ -59,7 +53,7 @@ pub(crate) async fn insert_book(
         r#"
         INSERT INTO books (title, author, status)
         VALUES (?, ?, 'want_to_read')
-        RETURNING id, title, author, status, created_at
+        RETURNING id, title, author, status
         "#,
     )
     .bind(title)
@@ -74,45 +68,43 @@ pub(crate) async fn list_books(
     pool: &SqlitePool,
     status: Option<ReadingStatus>,
 ) -> Result<Vec<Book>, AppError> {
+    // Option の有無で SQL を分け、フィルターなしの意味を SQL 側でも明示する。
     let rows = match status {
-        Some(status) => sqlx::query_as::<_, BookRow>(
-            "SELECT id, title, author, status, created_at FROM books WHERE status = ? ORDER BY id",
-        )
-        .bind(status.as_str())
-        .fetch_all(pool)
-        .await?,
-        None => sqlx::query_as::<_, BookRow>(
-            "SELECT id, title, author, status, created_at FROM books ORDER BY id",
-        )
-        .fetch_all(pool)
-        .await?,
+        Some(status) => {
+            sqlx::query_as::<_, BookRow>(
+                "SELECT id, title, author, status FROM books WHERE status = ? ORDER BY id",
+            )
+            .bind(status.as_str())
+            .fetch_all(pool)
+            .await?
+        }
+        None => {
+            sqlx::query_as::<_, BookRow>("SELECT id, title, author, status FROM books ORDER BY id")
+                .fetch_all(pool)
+                .await?
+        }
     };
 
     rows.into_iter().map(Book::try_from).collect()
 }
 
 pub(crate) async fn find_book(pool: &SqlitePool, id: BookId) -> Result<Book, AppError> {
-    let row = sqlx::query_as::<_, BookRow>(
-        "SELECT id, title, author, status, created_at FROM books WHERE id = ?",
-    )
-    .bind(id.0)
-    .fetch_optional(pool)
-    .await?
-    .ok_or(AppError::NotFound)?;
+    let row =
+        sqlx::query_as::<_, BookRow>("SELECT id, title, author, status FROM books WHERE id = ?")
+            .bind(id.0)
+            .fetch_optional(pool)
+            .await?
+            .ok_or(AppError::NotFound)?;
 
     row.try_into()
 }
 
-pub(crate) async fn list_notes(
-    pool: &SqlitePool,
-    book_id: BookId,
-) -> Result<Vec<Note>, AppError> {
-    let rows = sqlx::query_as::<_, NoteRow>(
-        "SELECT id, book_id, body, created_at FROM notes WHERE book_id = ? ORDER BY id",
-    )
-    .bind(book_id.0)
-    .fetch_all(pool)
-    .await?;
+pub(crate) async fn list_notes(pool: &SqlitePool, book_id: BookId) -> Result<Vec<Note>, AppError> {
+    let rows =
+        sqlx::query_as::<_, NoteRow>("SELECT id, body FROM notes WHERE book_id = ? ORDER BY id")
+            .bind(book_id.0)
+            .fetch_all(pool)
+            .await?;
 
     Ok(rows.into_iter().map(Note::from).collect())
 }
@@ -126,7 +118,7 @@ pub(crate) async fn insert_note(
         r#"
         INSERT INTO notes (book_id, body)
         VALUES (?, ?)
-        RETURNING id, book_id, body, created_at
+        RETURNING id, body
         "#,
     )
     .bind(book_id.0)
@@ -147,7 +139,7 @@ pub(crate) async fn update_book_status(
         UPDATE books
         SET status = ?
         WHERE id = ?
-        RETURNING id, title, author, status, created_at
+        RETURNING id, title, author, status
         "#,
     )
     .bind(status.as_str())

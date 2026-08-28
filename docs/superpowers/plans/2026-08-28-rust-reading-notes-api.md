@@ -6,7 +6,7 @@
 
 **Architecture:** HTTP、ユースケース、DB 操作、ドメイン型を明示的なレイヤーへ分ける。完成コードと日本語の読解ガイドを一緒に提供する。
 
-**Tech Stack:** Rust 2024、Axum、Tokio、SQLx、SQLite、Serde、Thiserror、Chrono、Tower
+**Tech Stack:** Rust 2024、Axum、Tokio、SQLx、SQLite、Serde、Thiserror、Tower
 
 **Spec:** `docs/superpowers/specs/2026-08-28-rust-reading-notes-api-design.md`
 

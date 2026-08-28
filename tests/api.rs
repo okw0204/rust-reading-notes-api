@@ -429,7 +429,13 @@ async fn deletes_a_book_and_its_notes() {
 
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
     assert_eq!(
-        response.into_body().collect().await.unwrap().to_bytes().len(),
+        response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .len(),
         0
     );
     let note_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM notes")
@@ -443,11 +449,7 @@ async fn deletes_a_book_and_its_notes() {
 async fn returns_not_found_when_deleting_an_unknown_book() {
     let app = test_app().await;
     let response = app
-        .oneshot(
-            Request::delete("/books/999")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::delete("/books/999").body(Body::empty()).unwrap())
         .await
         .unwrap();
 

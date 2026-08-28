@@ -1,6 +1,6 @@
 //! HTTP の経路と、全 handler で共有する状態を組み立てます。
 
-use axum::{routing::get, Router};
+use axum::{Router, routing::get};
 use std::{error::Error, str::FromStr};
 
 use sqlx::{
