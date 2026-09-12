@@ -45,6 +45,7 @@ curl -i http://127.0.0.1:3000/books
 ### 教材を開く
 
 ```bash
+mise trust mise.toml
 mise install
 mise exec -- mdbook --version
 mise exec -- mdbook-mermaid --version

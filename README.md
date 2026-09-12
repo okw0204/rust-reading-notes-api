@@ -15,6 +15,7 @@ Router → handler → ReadingService<R> → BookRepository の SQLite 実装 �
 ローカルで目次・検索・図付きの教材を開くには、mise でツールを導入します。
 
 ```bash
+mise trust mise.toml
 mise install
 mise exec -- mdbook serve --hostname 127.0.0.1 --port 3001
 ```
