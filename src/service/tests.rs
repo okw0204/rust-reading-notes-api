@@ -1,0 +1,320 @@
+use super::*;
+
+mod fake;
+use fake::FakeBookRepository;
+
+#[tokio::test]
+async fn fake_conditional_update_rejects_a_stale_state() {
+    let repository = FakeBookRepository::default();
+    let title = BookTitle::try_from("Book".to_owned()).unwrap();
+    let author = Author::try_from("Author".to_owned()).unwrap();
+    let current = repository.insert_book(&title, &author).await.unwrap();
+    let first = repository.find_book(current.id()).await.unwrap();
+    let second = repository.find_book(current.id()).await.unwrap();
+    let StoredBook::WantToRead(first) = first else {
+        panic!("取得した書籍は未読")
+    };
+    let StoredBook::WantToRead(second) = second else {
+        panic!("二度目に取得した書籍も未読")
+    };
+    let saved = repository
+        .update_book_status(
+            ReadingStatus::WantToRead,
+            StoredBook::Reading(first.start_reading()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(saved.status(), ReadingStatus::Reading);
+    // エラー注入を使わず、SQLite と同じ条件付き更新の契約を確かめる。
+    let error = repository
+        .update_book_status(
+            ReadingStatus::WantToRead,
+            StoredBook::Reading(second.start_reading()),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(error, AppError::Conflict));
+    assert_eq!(
+        repository.find_book(current.id()).await.unwrap().status(),
+        ReadingStatus::Reading
+    );
+}
+
+#[tokio::test]
+async fn fake_conditional_update_rejects_deletion_after_fetch() {
+    let repository = FakeBookRepository::default();
+    let title = BookTitle::try_from("Book".to_owned()).unwrap();
+    let author = Author::try_from("Author".to_owned()).unwrap();
+    let current = repository.insert_book(&title, &author).await.unwrap();
+    let fetched = repository.find_book(current.id()).await.unwrap();
+    let StoredBook::WantToRead(book) = fetched else {
+        panic!("取得した書籍は未読")
+    };
+    repository.delete_book(current.id()).await.unwrap();
+    let error = repository
+        .update_book_status(
+            ReadingStatus::WantToRead,
+            StoredBook::Reading(book.start_reading()),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(error, AppError::Conflict));
+    assert!(matches!(
+        repository.find_book(current.id()).await,
+        Err(AppError::NotFound)
+    ));
+}
+
+// ANCHOR: service_conflict_test
+#[tokio::test]
+async fn reports_a_save_conflict_without_changing_the_book() {
+    let fake = FakeBookRepository::default();
+    let service = ReadingService::new(fake.clone());
+    let book = service
+        .create_book(CreateBook {
+            title: "Rust Book".to_owned(),
+            author: "Author".to_owned(),
+        })
+        .await
+        .unwrap();
+    fake.fail_next_update(AppError::Conflict);
+    let error = service
+        .update_status(
+            book.id(),
+            UpdateStatus {
+                status: "reading".to_owned(),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(error, AppError::Conflict));
+    let stored = fake.find_book(book.id()).await.unwrap();
+    assert_eq!(stored.status(), ReadingStatus::WantToRead);
+    // 保存エラーは一度だけ返し、再試行では正しい遷移を保存できる。
+    assert_eq!(
+        service
+            .update_status(
+                book.id(),
+                UpdateStatus {
+                    status: "reading".to_owned(),
+                }
+            )
+            .await
+            .unwrap()
+            .status(),
+        ReadingStatus::Reading
+    );
+}
+
+// ANCHOR_END: service_conflict_test
+
+#[tokio::test]
+async fn rejects_invalid_inputs_without_repository_access() {
+    let fake = FakeBookRepository::default();
+    let service = ReadingService::new(fake.clone());
+    for (title, author) in [(" ", "Author"), ("Title", "\t")] {
+        assert!(matches!(
+            service
+                .create_book(CreateBook {
+                    title: title.to_owned(),
+                    author: author.to_owned(),
+                })
+                .await,
+            Err(AppError::Validation(_))
+        ));
+    }
+    assert!(matches!(
+        service
+            .add_note(
+                BookId(1),
+                AddNote {
+                    body: "\n".to_owned(),
+                }
+            )
+            .await,
+        Err(AppError::Validation(_))
+    ));
+    assert!(matches!(
+        service.list_books(Some("paused".to_owned())).await,
+        Err(AppError::Validation(_))
+    ));
+    assert!(matches!(
+        service
+            .update_status(
+                BookId(1),
+                UpdateStatus {
+                    status: "paused".to_owned(),
+                }
+            )
+            .await,
+        Err(AppError::Validation(_))
+    ));
+    assert_eq!(fake.calls(), 0);
+}
+
+#[tokio::test]
+async fn preserves_a_database_save_error_and_the_stored_state() {
+    let fake = FakeBookRepository::default();
+    let service = ReadingService::new(fake.clone());
+    let book = service
+        .create_book(CreateBook {
+            title: "Book".to_owned(),
+            author: "Author".to_owned(),
+        })
+        .await
+        .unwrap();
+    fake.fail_next_update(AppError::Database(sqlx::Error::PoolClosed));
+    assert!(matches!(
+        service
+            .update_status(
+                book.id(),
+                UpdateStatus {
+                    status: "reading".to_owned(),
+                }
+            )
+            .await,
+        Err(AppError::Database(sqlx::Error::PoolClosed))
+    ));
+    assert_eq!(
+        service.get_book(book.id()).await.unwrap().book.status(),
+        ReadingStatus::WantToRead
+    );
+}
+
+#[tokio::test]
+async fn rejects_invalid_transitions_without_saving() {
+    let fake = FakeBookRepository::default();
+    let service = ReadingService::new(fake.clone());
+    let book = service
+        .create_book(CreateBook {
+            title: "Book".to_owned(),
+            author: "Author".to_owned(),
+        })
+        .await
+        .unwrap();
+    for (advance, rejected) in [
+        (None, vec!["want_to_read", "finished"]),
+        (Some("reading"), vec!["want_to_read", "reading"]),
+        (
+            Some("finished"),
+            vec!["want_to_read", "reading", "finished"],
+        ),
+    ] {
+        if let Some(status) = advance {
+            service
+                .update_status(
+                    book.id(),
+                    UpdateStatus {
+                        status: status.to_owned(),
+                    },
+                )
+                .await
+                .unwrap();
+        }
+        for status in rejected {
+            let before = fake.calls();
+            assert!(matches!(
+                service
+                    .update_status(
+                        book.id(),
+                        UpdateStatus {
+                            status: status.to_owned(),
+                        }
+                    )
+                    .await,
+                Err(AppError::Conflict)
+            ));
+            assert_eq!(fake.calls() - before, 1);
+        }
+    }
+}
+
+#[tokio::test]
+async fn manages_books_and_notes_through_the_repository() {
+    let service = ReadingService::new(FakeBookRepository::default());
+    let first = service
+        .create_book(CreateBook {
+            title: " Book \n".to_owned(),
+            author: " Author \t".to_owned(),
+        })
+        .await
+        .unwrap();
+    let second = service
+        .create_book(CreateBook {
+            title: "Second".to_owned(),
+            author: "Author".to_owned(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(first.status(), ReadingStatus::WantToRead);
+    let (_, title, author, _) = first.clone().into_parts();
+    assert_eq!(title.as_str(), "Book");
+    assert_eq!(author.as_str(), "Author");
+    assert!(service.get_book(first.id()).await.unwrap().notes.is_empty());
+    let note = service
+        .add_note(
+            first.id(),
+            AddNote {
+                body: " memo \n".to_owned(),
+            },
+        )
+        .await
+        .unwrap();
+    let detail = service.get_book(first.id()).await.unwrap();
+    assert_eq!(detail.notes.len(), 1);
+    assert_eq!(detail.notes[0].id, note.id);
+    assert_eq!(detail.notes[0].body.as_str(), "memo");
+    service
+        .update_status(
+            first.id(),
+            UpdateStatus {
+                status: "reading".to_owned(),
+            },
+        )
+        .await
+        .unwrap();
+    let all = service.list_books(None).await.unwrap();
+    assert_eq!(
+        all.iter().map(StoredBook::id).collect::<Vec<_>>(),
+        vec![first.id(), second.id()]
+    );
+    let filtered = service
+        .list_books(Some("reading".to_owned()))
+        .await
+        .unwrap();
+    assert_eq!(
+        filtered.iter().map(StoredBook::id).collect::<Vec<_>>(),
+        vec![first.id()]
+    );
+    service.delete_book(first.id()).await.unwrap();
+    assert!(matches!(
+        service.get_book(first.id()).await,
+        Err(AppError::NotFound)
+    ));
+    assert!(matches!(
+        service.delete_book(first.id()).await,
+        Err(AppError::NotFound)
+    ));
+    assert!(matches!(
+        service
+            .add_note(
+                first.id(),
+                AddNote {
+                    body: "memo".to_owned()
+                }
+            )
+            .await,
+        Err(AppError::NotFound)
+    ));
+    assert!(matches!(
+        service
+            .update_status(
+                first.id(),
+                UpdateStatus {
+                    status: "reading".to_owned()
+                }
+            )
+            .await,
+        Err(AppError::NotFound)
+    ));
+}

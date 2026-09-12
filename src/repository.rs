@@ -1,180 +1,56 @@
-//! SQL とドメイン型の変換を担当するデータアクセス層です。
+//! service が利用する永続化の契約を定義します。
 
-use sqlx::{FromRow, SqlitePool};
+use std::future::Future;
 
 use crate::{
-    domain::{Book, BookId, Note, NoteId, ReadingStatus},
+    domain::{Author, BookId, BookTitle, Note, NoteBody, ReadingStatus, StoredBook},
     error::AppError,
 };
 
-#[derive(FromRow)]
-// SQLx が復元する DB 表現を、公開したいドメイン型から分離する。
-struct BookRow {
-    id: i64,
-    title: String,
-    author: String,
-    status: String,
+mod sqlite;
+pub(crate) use sqlite::SqliteBookRepository;
+
+// ANCHOR: repository_contract
+/// 実装と返される Future をスレッド間で扱える永続化境界です。
+pub(crate) trait BookRepository: Send + Sync {
+    /// 検証済みのタイトルと著者で未読の本を登録し、採番済みの本を返します。
+    fn insert_book(
+        &self,
+        title: &BookTitle,
+        author: &Author,
+    ) -> impl Future<Output = Result<StoredBook, AppError>> + Send;
+
+    /// 指定状態で絞った本を ID 順に返します。指定なしは全件、該当なしは空です。
+    fn list_books(
+        &self,
+        status: Option<ReadingStatus>,
+    ) -> impl Future<Output = Result<Vec<StoredBook>, AppError>> + Send;
+
+    /// ID に対応する本を返し、未検出なら NotFound を返します。
+    fn find_book(&self, id: BookId) -> impl Future<Output = Result<StoredBook, AppError>> + Send;
+
+    /// 本のメモを ID 順に返します。本やメモがなければ空の一覧を返します。
+    fn list_notes(
+        &self,
+        book_id: BookId,
+    ) -> impl Future<Output = Result<Vec<Note>, AppError>> + Send;
+
+    /// 検証済みの本文を追加します。対象の本がなければ NotFound を返します。
+    fn insert_note(
+        &self,
+        book_id: BookId,
+        body: &NoteBody,
+    ) -> impl Future<Output = Result<Note, AppError>> + Send;
+
+    /// 現在状態が expected と一致する場合だけ、遷移済みの next の状態を保存します。
+    /// 状態の不一致や取得後の削除は Conflict とし、保存内容を変更しません。
+    fn update_book_status(
+        &self,
+        expected: ReadingStatus,
+        next: StoredBook,
+    ) -> impl Future<Output = Result<StoredBook, AppError>> + Send;
+
+    /// 本と対応するメモを削除します。本がなければ NotFound を返します。
+    fn delete_book(&self, id: BookId) -> impl Future<Output = Result<(), AppError>> + Send;
 }
-
-#[derive(FromRow)]
-struct NoteRow {
-    id: i64,
-    body: String,
-}
-
-impl TryFrom<BookRow> for Book {
-    type Error = AppError;
-
-    fn try_from(row: BookRow) -> Result<Self, Self::Error> {
-        Ok(Self {
-            id: BookId(row.id),
-            title: row.title,
-            author: row.author,
-            status: ReadingStatus::try_from(row.status.as_str())?,
-        })
-    }
-}
-
-impl From<NoteRow> for Note {
-    fn from(row: NoteRow) -> Self {
-        Self {
-            id: NoteId(row.id),
-            body: row.body,
-        }
-    }
-}
-
-pub(crate) async fn insert_book(
-    pool: &SqlitePool,
-    title: &str,
-    author: &str,
-) -> Result<Book, AppError> {
-    let row = sqlx::query_as::<_, BookRow>(
-        r#"
-        INSERT INTO books (title, author, status)
-        VALUES (?, ?, 'want_to_read')
-        RETURNING id, title, author, status
-        "#,
-    )
-    .bind(title)
-    .bind(author)
-    .fetch_one(pool)
-    .await?;
-
-    row.try_into()
-}
-
-pub(crate) async fn list_books(
-    pool: &SqlitePool,
-    status: Option<ReadingStatus>,
-) -> Result<Vec<Book>, AppError> {
-    // Option の有無で SQL を分け、フィルターなしの意味を SQL 側でも明示する。
-    let rows = match status {
-        Some(status) => {
-            sqlx::query_as::<_, BookRow>(
-                "SELECT id, title, author, status FROM books WHERE status = ? ORDER BY id",
-            )
-            .bind(status.as_str())
-            .fetch_all(pool)
-            .await?
-        }
-        None => {
-            sqlx::query_as::<_, BookRow>("SELECT id, title, author, status FROM books ORDER BY id")
-                .fetch_all(pool)
-                .await?
-        }
-    };
-
-    rows.into_iter().map(Book::try_from).collect()
-}
-
-pub(crate) async fn find_book(pool: &SqlitePool, id: BookId) -> Result<Book, AppError> {
-    let row =
-        sqlx::query_as::<_, BookRow>("SELECT id, title, author, status FROM books WHERE id = ?")
-            .bind(id.0)
-            .fetch_optional(pool)
-            .await?
-            .ok_or(AppError::NotFound)?;
-
-    row.try_into()
-}
-
-pub(crate) async fn list_notes(pool: &SqlitePool, book_id: BookId) -> Result<Vec<Note>, AppError> {
-    let rows =
-        sqlx::query_as::<_, NoteRow>("SELECT id, body FROM notes WHERE book_id = ? ORDER BY id")
-            .bind(book_id.0)
-            .fetch_all(pool)
-            .await?;
-
-    Ok(rows.into_iter().map(Note::from).collect())
-}
-
-pub(crate) async fn insert_note(
-    pool: &SqlitePool,
-    book_id: BookId,
-    body: &str,
-) -> Result<Note, AppError> {
-    let row = sqlx::query_as::<_, NoteRow>(
-        r#"
-        INSERT INTO notes (book_id, body)
-        SELECT ?, ?
-        WHERE EXISTS (SELECT 1 FROM books WHERE id = ?)
-        RETURNING id, body
-        "#,
-    )
-    .bind(book_id.0)
-    .bind(body)
-    .bind(book_id.0)
-    .fetch_optional(pool)
-    .await?
-    .ok_or(AppError::NotFound)?;
-
-    Ok(row.into())
-}
-
-pub(crate) async fn update_book_status(
-    pool: &SqlitePool,
-    id: BookId,
-    status: ReadingStatus,
-) -> Result<Book, AppError> {
-    let row = sqlx::query_as::<_, BookRow>(
-        r#"
-        UPDATE books
-        SET status = ?
-        WHERE id = ?
-        RETURNING id, title, author, status
-        "#,
-    )
-    .bind(status.as_str())
-    .bind(id.0)
-    .fetch_optional(pool)
-    .await?
-    .ok_or(AppError::NotFound)?;
-
-    row.try_into()
-}
-
-pub(crate) async fn delete_book(pool: &SqlitePool, id: BookId) -> Result<(), AppError> {
-    let result = sqlx::query("DELETE FROM books WHERE id = ?")
-        .bind(id.0)
-        .execute(pool)
-        .await?;
-
-    if result.rows_affected() == 0 {
-        return Err(AppError::NotFound);
-    }
-
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[sqlx::test(migrations = "./migrations")]
-    async fn inserting_a_note_for_an_unknown_book_returns_not_found(pool: SqlitePool) {
-        let error = insert_note(&pool, BookId(999), "note").await.unwrap_err();
-
-        assert!(matches!(error, AppError::NotFound));
-    }
-}
+// ANCHOR_END: repository_contract

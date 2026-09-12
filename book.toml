@@ -1,0 +1,13 @@
+[book]
+title = "Rust Reading Notes API を読む"
+language = "ja"
+src = "docs/book"
+
+[build]
+build-dir = "book"
+
+[preprocessor.mermaid]
+command = "mdbook-mermaid"
+
+[output.html]
+additional-js = ["mermaid.min.js", "mermaid-init.js"]

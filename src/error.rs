@@ -14,10 +14,18 @@ pub(crate) enum AppError {
     Validation(String),
     #[error("resource not found")]
     NotFound,
+    #[error("reading state conflict")]
+    Conflict,
     #[error("database error: {0}")]
     Database(#[from] sqlx::Error),
     #[error("invalid value stored in database: {0}")]
     InvalidStoredValue(String),
+}
+
+impl From<crate::domain::InvalidText> for AppError {
+    fn from(error: crate::domain::InvalidText) -> Self {
+        Self::Validation(error.to_string())
+    }
 }
 
 #[derive(Serialize)]
@@ -31,10 +39,16 @@ struct ErrorDetail {
     message: String,
 }
 
+// ANCHOR: http_error_mapping
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, code, message) = match self {
             Self::Validation(message) => (StatusCode::BAD_REQUEST, "validation_error", message),
+            Self::Conflict => (
+                StatusCode::CONFLICT,
+                "conflict",
+                "reading state conflict".to_owned(),
+            ),
             Self::NotFound => (
                 StatusCode::NOT_FOUND,
                 "not_found",
@@ -67,3 +81,4 @@ impl IntoResponse for AppError {
             .into_response()
     }
 }
+// ANCHOR_END: http_error_mapping
