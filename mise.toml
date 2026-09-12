@@ -1,0 +1,3 @@
+[tools]
+mdbook = "0.5.4"
+"cargo:mdbook-mermaid" = "0.17.1"

@@ -4,10 +4,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
 
+mod book;
+pub(crate) use book::StoredBook;
+pub use book::{Book, Finished, Reading, WantToRead};
+mod text;
+pub use text::{Author, BookTitle, InvalidText, NoteBody};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(transparent)]
 // i64 のまま扱わず、将来 NoteId と取り違えたときにコンパイラが検出できるようにする。
-pub(crate) struct BookId(pub(crate) i64);
+pub struct BookId(pub i64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(transparent)]
@@ -59,22 +65,14 @@ impl TryFrom<&str> for ReadingStatus {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct Book {
-    pub(crate) id: BookId,
-    pub(crate) title: String,
-    pub(crate) author: String,
-    pub(crate) status: ReadingStatus,
-}
-
-#[derive(Debug, Clone)]
 pub(crate) struct Note {
     pub(crate) id: NoteId,
-    pub(crate) body: String,
+    pub(crate) body: NoteBody,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct BookDetail {
-    pub(crate) book: Book,
+    pub(crate) book: StoredBook,
     pub(crate) notes: Vec<Note>,
 }
 

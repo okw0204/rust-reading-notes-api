@@ -1,92 +1,104 @@
 # Rust Reading Notes API
 
-Rust Book を一通り読んだあとに、Web API のコードを入口からデータベースまで追うためのコードリーディング教材です。
-
-読書記録を題材に、次の処理経路を明示的なレイヤーへ分けています。
+Rust Book を一通り読んだあとに、完成した Web API を HTTP の入口から DB、テストまで追うための日本語コードリーディング教材です。読書記録を題材に、Axum・SQLx・SQLite と Rust の型を結びつけます。
 
 ```text
-HTTP request
-  ↓
-Router
-  ↓
-handler        Path・Query・JSONをRustの型へ変換
-  ↓
-service        入力検証とユースケース
-  ↓
-repository     SQLxによるSQLite操作
-  ↓
-HTTP response
+Router → handler → ReadingService<R> → BookRepository の SQLite 実装 → DB
+            ↑         結果とエラーが呼び出し元へ戻り、HTTP 応答になる
 ```
 
-本格的な読書管理サービスではありません。認証や外部 API を省き、60〜90 分で主要な処理を一周できる規模を優先しています。
+認証や外部 API は扱わず、値の移動、型の保証、保存の契約を読むことに集中します。第1部は60〜90分、全4部12章は3〜5時間程度が目安です。復習や実験の量に合わせて調整してください。
+
+## コードリーディング教材
+
+[教材の使い方](docs/book/introduction.md)と[目次](docs/book/SUMMARY.md)から読み始められます。
+ローカルで目次・検索・図付きの教材を開くには、mise でツールを導入します。
+
+```bash
+mise trust mise.toml
+mise install
+mise exec -- mdbook serve --hostname 127.0.0.1 --port 3001
+```
+
+mise の環境がシェルで有効なら、`mdbook serve --port 3001` でも起動できます。
+`http://127.0.0.1:3001/introduction.html` を開き、終了時は `Ctrl+C` を押します。
+Markdown 原文ではソースの `include` や Mermaid の図が生成 HTML と同じ表示にはならないため、抜粋と図はローカルの教材で確認してください。
+検索で日本語の語句が見つからない場合は、`Future` や `BookRepository` などのコード識別子、または目次を使ってください。
 
 ## 学べること
 
-- Axum の`Router`、extractor、handlerがどうつながるか
-- async関数を通ってSQLxのDB操作へ到達する流れ
-- `BookId`と`NoteId`をnewtypeにする理由
-- 文字列で保存される状態を`ReadingStatus`で制約する方法
-- HTTP用、DB用、ドメイン用の型を分ける境界設計
-- `AppError`をHTTPステータスとJSONへ変換する方法
-- Routerを直接呼ぶ統合テストの組み立て方
+| 部 | 内容と入口 |
+| --- | --- |
+| 第1部 | [依存関係の組み立て](docs/book/01-flow/composition.md)、登録時の所有権移動、詳細取得とエラー変換 |
+| 第2部 | [検証済みの値型](docs/book/02-types/validated-values.md)、`Book<S>` の型状態、DB の実行時状態との境界 |
+| 第3部 | [repository trait](docs/book/03-abstraction/repository-trait.md)、ジェネリックな service、Future の借用と `Send`・`Sync`・`Arc` |
+| 第4部 | [service のフェイク](docs/book/04-tests/service-fake.md)、SQLite の条件付き更新、Router の HTTP 統合テスト |
+
+各章は「問い → 読む場所と順序 → 解説 → 確認 → 解答」の順です。完成した実装とテストを根拠に読み進められます。
 
 ## 起動
 
-必要なものはRust toolchainだけです。SQLiteはSQLxが組み込みで利用します。
+Rust の現在の stable を推奨します（Edition 2024 と依存クレートの要求を満たすもの）。SQLite は SQLx が組み込みで利用し、別の DB サーバーは不要です。コマンドはリポジトリのルートで実行します。
 
 ```bash
 cargo run
 ```
 
-サーバーは`http://127.0.0.1:3000`で起動し、リポジトリ直下に`reading-notes.db`を作成します。
+API は `http://127.0.0.1:3000` で起動し、`reading-notes.db` を作成して migration を適用します。起動時の `connect_database` と API テストの準備関数 `test_app_and_pool` は、それぞれ pool を最大1接続に設定します。repository の `#[sqlx::test]` は SQLx が別の設定で pool を準備します。接続数の制限は、複数の SQL をまたぐユースケース全体の原子性を保証するものではありません。
 
-DB poolは教材の処理順を追いやすくするため、本番用ファイルDBとテスト用インメモリDBの両方を1接続に固定しています。高トラフィック向けの設定ではありません。
-
-本を登録します。
+別の端末で、未読の本を登録します。
 
 ```bash
 curl -i http://127.0.0.1:3000/books \
   -H 'content-type: application/json' \
   -d '{"title":"Rust for Rustaceans","author":"Jon Gjengset"}'
-```
 
-登録した本を一覧表示します。
-
-```bash
 curl http://127.0.0.1:3000/books
 curl 'http://127.0.0.1:3000/books?status=want_to_read'
 ```
 
-状態更新、メモ追加、詳細取得、削除も試せます。
+以降の `1` は登録応答の `id` に置き換えてください。未読から読書中、読了の順に進めます。
 
 ```bash
-curl -X PATCH http://127.0.0.1:3000/books/1/status \
+curl -i -X PATCH http://127.0.0.1:3000/books/1/status \
   -H 'content-type: application/json' \
   -d '{"status":"reading"}'
 
-curl -X POST http://127.0.0.1:3000/books/1/notes \
+curl -i -X POST http://127.0.0.1:3000/books/1/notes \
   -H 'content-type: application/json' \
   -d '{"body":"所有権の説明を再読する"}'
+
+curl -i -X PATCH http://127.0.0.1:3000/books/1/status \
+  -H 'content-type: application/json' \
+  -d '{"status":"finished"}'
 
 curl http://127.0.0.1:3000/books/1
 curl -i -X DELETE http://127.0.0.1:3000/books/1
 ```
 
-読書状態には`want_to_read`、`reading`、`finished`のいずれかを指定します。
-
 ## API
 
-| Method | Path | 成功時 | 処理 |
+| メソッド | パス | 成功時 | 処理 |
 | --- | --- | --- | --- |
-| `POST` | `/books` | `201` | 本を登録する |
+| `POST` | `/books` | `201` | 本を未読で登録する |
 | `GET` | `/books` | `200` | 本を一覧表示する |
 | `GET` | `/books?status=reading` | `200` | 状態で絞り込む |
 | `GET` | `/books/{id}` | `200` | 本とメモを取得する |
 | `PATCH` | `/books/{id}/status` | `200` | 読書状態を変更する |
 | `POST` | `/books/{id}/notes` | `201` | メモを追加する |
-| `DELETE` | `/books/{id}` | `204` | 本と関連メモを削除する |
+| `DELETE` | `/books/{id}` | `204` | 本と関連メモを削除する（本文なし） |
 
-extractorでRustの型へ変換できた後にアプリケーションが返すエラーは、次の形に統一しています。不正なJSON、`Content-Type`の不足、数値でないPathなど、handlerへ到達する前の失敗にはAxum標準のrejectionが使われます。この境界は`handler.rs`を読む際の確認ポイントです。
+登録時の状態は `want_to_read` 固定です。状態更新は `WantToRead → Reading → Finished` の順にだけ許可します。
+
+| 現在の状態 ＼ 要求する状態 | `want_to_read` | `reading` | `finished` |
+| --- | --- | --- | --- |
+| `want_to_read`（未読） | `409` | `200` | `409` |
+| `reading`（読書中） | `409` | `409` | `200` |
+| `finished`（読了） | `409` | `409` | `409` |
+
+認識できない状態名や空白だけの入力は `400 Bad Request` です。対象取得時の未検出は `404 Not Found`、取得後の条件付き更新が成立しない場合は途中の削除も含め `409 Conflict` です。保存値の不正や DB エラーは内部詳細を隠して `500 Internal Server Error` に変換します。
+
+アプリケーションのエラーは次の JSON 形式です。
 
 ```json
 {
@@ -97,111 +109,45 @@ extractorでRustの型へ変換できた後にアプリケーションが返す�
 }
 ```
 
+不正な JSON、`Content-Type` の不足、数値でない Path など、handler 本文より前の失敗には Axum 標準の rejection が使われます。この場合、上記の JSON 形式は保証しません。
+
 ## ファイル構成
 
 ```text
 src/
-├── main.rs        # DB接続とサーバー起動
-├── lib.rs         # バイナリと統合テストの共有境界
-├── app.rs         # RouterとAppState
-├── domain.rs      # ID、読書状態、本、メモ
-├── handler.rs     # HTTPの入力・出力
-├── service.rs     # 入力検証とユースケース
-├── repository.rs  # SQLとDB行の変換
-└── error.rs       # エラーとHTTP responseの変換
+├── main.rs             # DB 接続とサーバー起動
+├── lib.rs              # バイナリと統合テストの共有境界
+├── app.rs              # Router と共有状態の組み立て
+├── domain.rs           # ID、読書状態、ドメイン型の入口
+├── domain/
+│   ├── book.rs         # Book<S> と StoredBook
+│   └── text.rs         # 検証済みの文字列
+├── handler.rs          # HTTP の入力・出力
+├── service.rs          # ReadingService<R> とユースケース
+├── service/
+│   ├── tests.rs        # service の判断と失敗の検査
+│   └── tests/fake.rs   # メモリ上の repository
+├── repository.rs       # BookRepository の契約
+├── repository/sqlite.rs # SQL、行変換、DB テスト
+└── error.rs            # エラーと HTTP 応答の変換
 
-migrations/        # SQLite schema
-tests/api.rs       # 実DBとRouterを使う統合テスト
+migrations/             # SQLite のスキーマと制約
+tests/api.rs            # 実 DB と Router の統合テスト
+docs/book/              # 全4部12章と導入・目次
+book.toml               # mdBook の設定
+mise.toml               # 教材ビルド用ツールの固定
 ```
 
-## 60〜90分の読解順路
-
-### 1. 起動と依存関係の組み立て（10分）
-
-`src/main.rs`、`src/lib.rs`、`src/app.rs`の順に読みます。
-
-読む前の問い:
-
-- バイナリとは別に`lib.rs`があると、テストにどんな利点があるでしょうか。
-- `SqlitePool`はどこで作られ、どこまで移動するでしょうか。
-
-確認:
-
-- `build_app`をテストと本番が共有する理由を説明できますか。
-- `AppState`が`Clone`を必要とする理由を推測できますか。
-
-### 2. 本の登録を端から端まで追う（20分）
-
-`app.rs`の`POST /books`から始め、`handler::create_book`、`service::create_book`、`repository::insert_book`へ進みます。
-
-読む前の問い:
-
-- 空文字の検証はhandler、service、repositoryのどこへ置くべきでしょうか。
-- `CreateBookRequest`をそのままrepositoryへ渡さない理由は何でしょうか。
-
-確認:
-
-- `String`はリクエストからどこへ所有権を移していますか。
-- SQLxの`BookRow`はどこで`Book`へ変わりますか。
-
-### 3. 型の境界を読む（15分）
-
-`src/domain.rs`と、`handler.rs`、`repository.rs`にある`From`・`TryFrom`実装を読みます。
-
-読む前の問い:
-
-- `BookId(i64)`は`i64`だけを使う場合と何が違うでしょうか。
-- DBの`status`が任意の文字列であることを、どの境界で止めるべきでしょうか。
-
-確認:
-
-- 利用者の不正入力と、DBに保存された不正値はなぜ別のエラーですか。
-- `#[serde(transparent)]`と`#[serde(rename_all = "snake_case")]`はJSONをどう変えますか。
-
-### 4. 詳細取得とエラーを追う（15分）
-
-`GET /books/{id}`を追い、最後に`src/error.rs`を読みます。
-
-読む前の問い:
-
-- 本が存在しないことはSQLxではどの型で表せるでしょうか。
-- 内部のDBエラーをそのまま利用者へ返すと何が問題でしょうか。
-
-確認:
-
-- `Option`はどこで`AppError::NotFound`へ変わりますか。
-- `?`が各レイヤーを早期returnする流れを説明できますか。
-
-### 5. テストから逆向きに読む（15〜30分）
-
-`tests/api.rs`を開き、`adds_a_note_to_a_book`と`deletes_a_book_and_its_notes`を読みます。
-
-読む前の問い:
-
-- 実際のTCPポートを開かずに、どうやってHTTP処理をテストしているでしょうか。
-- インメモリSQLiteを1接続に固定する理由は何でしょうか。
-
-確認:
-
-- テストはhandlerだけでなく、どの範囲を実際に通っていますか。
-- 本を削除した際のメモ削除を、なぜレスポンスだけでなくDBでも確認していますか。
-
-## テスト
+## 検証方法
 
 ```bash
 cargo fmt -- --check
 cargo test
 cargo clippy --all-targets --all-features -- -D warnings
+mise exec -- mdbook build
+git diff --check
 ```
 
-統合テストはテストごとに独立したインメモリSQLiteを作り、同じmigrationを適用します。外部サービスやmockは使いません。
+`cargo test` は型状態の doctest（合法な操作と `compile_fail`）、service のフェイク、SQLite の保存契約、Router の統合テストを実行します。API テストは独立したインメモリ SQLite（`sqlite::memory:`）を1接続で使い、repository の `#[sqlx::test]` は SQLx が独立したファイル DB と pool を用意します。後者は `connect_database` の1接続設定を引き継ぎません。どちらもアプリと同じ migration を適用し、手元の `reading-notes.db` を共有しません。フェイクでは保存失敗を注入し、repository テストでは実 SQL、API テストでは HTTP と保存結果を観測します。
 
-## 発展課題
-
-1. `GET /books`へページネーションを追加する。
-2. タイトルまたは著者の部分一致検索を追加する。
-3. repositoryをtraitにして、serviceの単体テスト用実装とSQLite実装を差し替える。
-4. `created_at`をAPIレスポンスへ追加し、日時表現の境界を設計する。
-5. 本とメモの詳細取得に一貫性が必要な場合、トランザクションをどう使うか検討する。
-
-抽象化を増やす前に、現在の具体的な実装でどの依存を切り離したいのか説明できる状態を目指してください。
+`mdbook build` の生成先は `book/` で、Git 管理対象外です。検証の読み方は[第4部](docs/book/04-tests/service-fake.md)で確認できます。

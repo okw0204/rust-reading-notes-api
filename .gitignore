@@ -1,4 +1,5 @@
 /target
+/book/
 *.db
 *.db-shm
 *.db-wal

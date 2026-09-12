@@ -12,8 +12,10 @@ async fn test_app() -> axum::Router {
     test_app_and_pool().await.0
 }
 
+// ANCHOR: api_test_setup
 async fn test_app_and_pool() -> (axum::Router, SqlitePool) {
-    // SQLite のインメモリ DB は接続ごとに別物なので、テストでは 1 接続に固定する。
+    // 教材の接続管理を単純にするため最大 1 接続にする。各テストは別の pool を作る。
+    // SQLx 0.8.6 の sqlite::memory: は、同じ pool の複数接続でも DB を共有できる。
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
         .connect("sqlite::memory:")
@@ -26,6 +28,170 @@ async fn test_app_and_pool() -> (axum::Router, SqlitePool) {
 async fn json_body(response: axum::response::Response) -> Value {
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
     serde_json::from_slice(&bytes).unwrap()
+}
+
+// ANCHOR_END: api_test_setup
+
+fn json_request(method: &str, path: &str, body: Value) -> Request<Body> {
+    Request::builder()
+        .method(method)
+        .uri(path)
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+#[tokio::test]
+async fn hides_database_error_details() {
+    let (app, pool) = test_app_and_pool().await;
+    pool.close().await;
+    let response = app
+        .oneshot(Request::get("/books").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(
+        json_body(response).await,
+        json!({"error": {"code": "internal_error", "message": "internal server error"}})
+    );
+}
+
+#[tokio::test]
+async fn hides_invalid_stored_value_details() {
+    let (app, pool) = test_app_and_pool().await;
+    sqlx::query(
+        "INSERT INTO books (id, title, author, status) VALUES (1, ?, 'Author', 'want_to_read')",
+    )
+    .bind(" \t\n")
+    .execute(&pool)
+    .await
+    .unwrap();
+    for path in ["/books/1", "/books"] {
+        let response = app
+            .clone()
+            .oneshot(Request::get(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(
+            json_body(response).await,
+            json!({"error": {"code": "internal_error", "message": "internal server error"}})
+        );
+    }
+}
+
+#[tokio::test]
+async fn rejects_a_non_numeric_book_path() {
+    let app = test_app().await;
+    let response = app
+        .oneshot(
+            Request::get("/books/not-a-number")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    // Path の rejection は Axum が返すため、アプリケーションの JSON 形式を要求しない。
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn rejects_skipping_the_reading_state() {
+    let app = test_app().await;
+    let created = app
+        .clone()
+        .oneshot(json_request(
+            "POST",
+            "/books",
+            json!({"title":"Rust Book","author":"Author"}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let response = app
+        .clone()
+        .oneshot(json_request(
+            "PATCH",
+            "/books/1/status",
+            json!({"status":"finished"}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        json_body(response).await,
+        json!({"error": {
+            "code": "conflict", "message": "reading state conflict"
+        }})
+    );
+    let response = app
+        .oneshot(Request::get("/books/1").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(json_body(response).await["status"], "want_to_read");
+}
+
+#[tokio::test]
+async fn accepts_only_forward_adjacent_transitions() {
+    let states = ["want_to_read", "reading", "finished"];
+    for (from, &current) in states.iter().enumerate() {
+        for (to, &requested) in states.iter().enumerate() {
+            let app = test_app().await;
+            let created = app
+                .clone()
+                .oneshot(json_request(
+                    "POST",
+                    "/books",
+                    json!({"title":"Title","author":"Author"}),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(created.status(), StatusCode::CREATED);
+            for &step in states.iter().take(from + 1).skip(1) {
+                let response = app
+                    .clone()
+                    .oneshot(json_request(
+                        "PATCH",
+                        "/books/1/status",
+                        json!({"status":step}),
+                    ))
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::OK);
+            }
+            let response = app
+                .clone()
+                .oneshot(json_request(
+                    "PATCH",
+                    "/books/1/status",
+                    json!({"status":requested}),
+                ))
+                .await
+                .unwrap();
+            let allowed = to == from + 1;
+            assert_eq!(
+                response.status(),
+                if allowed {
+                    StatusCode::OK
+                } else {
+                    StatusCode::CONFLICT
+                },
+                "{current} -> {requested}"
+            );
+            if !allowed {
+                assert_eq!(json_body(response).await["error"]["code"], "conflict");
+            }
+            let stored = app
+                .oneshot(Request::get("/books/1").body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(stored.status(), StatusCode::OK);
+            assert_eq!(
+                json_body(stored).await["status"],
+                if allowed { requested } else { current }
+            );
+        }
+    }
 }
 
 #[tokio::test]
@@ -406,6 +572,7 @@ async fn returns_not_found_when_updating_an_unknown_book() {
     );
 }
 
+// ANCHOR: api_delete_test
 #[tokio::test]
 async fn deletes_a_book_and_its_notes() {
     let (app, pool) = test_app_and_pool().await;
@@ -444,6 +611,8 @@ async fn deletes_a_book_and_its_notes() {
         .unwrap();
     assert_eq!(note_count, 0);
 }
+
+// ANCHOR_END: api_delete_test
 
 #[tokio::test]
 async fn returns_not_found_when_deleting_an_unknown_book() {
