@@ -44,16 +44,32 @@ curl -i http://127.0.0.1:3000/books
 
 ### 教材を開く
 
+**初回のみ：設定の信頼とツールのインストール**
+
 ```bash
 mise trust mise.toml
 mise install
-mise exec -- mdbook --version
-mise exec -- mdbook-mermaid --version
-mise exec -- mdbook build
+```
+
+**教材を起動する：2回目以降はこれだけ**
+
+```bash
 mise exec -- mdbook serve --hostname 127.0.0.1 --port 3001
 ```
 
+`mdbook serve` はビルドと変更時の自動再ビルドも行うため、起動前に `mdbook build` を実行する必要はありません。教材の閲覧には API の起動も不要です。
+
 ブラウザで `http://127.0.0.1:3001/introduction.html` を開きます。API のポートは 3000、本のポートは 3001 です。それぞれの端末で `Ctrl+C` を押すと停止します。ビルド結果は `book/` に出力され、Git の管理対象には含めません。Mermaid の JavaScript は本に同梱されるので、閲覧時に CDN へ接続する必要はありません。
+
+**動作確認（必要な場合）**
+
+ツールのバージョンとビルドだけを確認するには、次を実行します。
+
+```bash
+mise exec -- mdbook --version
+mise exec -- mdbook-mermaid --version
+mise exec -- mdbook build
+```
 
 固定版の mdBook 0.5.4 と、mdbook-mermaid 0.17.1 の preprocessor がビルド時に使った mdBook 0.5.0 は、バージョン文字列の完全一致比較で既知の警告が出ます。この組み合わせでビルドと図の描画（外部通信遮断時を含む）を確認済みです。
 

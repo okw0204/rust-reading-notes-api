@@ -14,12 +14,22 @@ Router → handler → ReadingService<R> → BookRepository の SQLite 実装 �
 [教材の使い方](docs/book/introduction.md)と[目次](docs/book/SUMMARY.md)から読み始められます。
 ローカルで目次・検索・図付きの教材を開くには、mise でツールを導入します。
 
+**初回のみ：設定の信頼とツールのインストール**
+
+リポジトリのルートで実行します。
+
 ```bash
 mise trust mise.toml
 mise install
+```
+
+**教材を起動する：2回目以降はこれだけ**
+
+```bash
 mise exec -- mdbook serve --hostname 127.0.0.1 --port 3001
 ```
 
+`mdbook serve` はビルドと変更時の自動再ビルドも行います。教材の閲覧には API の起動は不要です。
 mise の環境がシェルで有効なら、`mdbook serve --port 3001` でも起動できます。
 `http://127.0.0.1:3001/introduction.html` を開き、終了時は `Ctrl+C` を押します。
 Markdown 原文ではソースの `include` や Mermaid の図が生成 HTML と同じ表示にはならないため、抜粋と図はローカルの教材で確認してください。
