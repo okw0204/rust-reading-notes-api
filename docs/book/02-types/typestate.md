@@ -50,9 +50,9 @@ stateDiagram-v2
 cargo test --doc
 ```
 
-正例はコンパイルして実行され、`compile_fail` はコンパイルが失敗することを検査します。通常のテストが不正な操作の `Err` を調べるのに対し、こちらは操作を記述したプログラム自体が受け入れられないことを確かめます。失敗理由の理解には、例で呼んでいるメソッドと `impl` の対象型を照合してください。この章の抜粋はソースの表示用で、テストの正本は rustdoc です。
+正例はコンパイルして実行され、`compile_fail` はコンパイルが失敗することを検査します。通常のテストが不正な操作の `Err` を調べるのに対し、こちらは操作を記述したプログラム自体が受け入れられないことを確かめます。この章の抜粋はソースの表示用で、テストの正本は rustdoc です。
 
-`compile_fail,E0599` の `E0599` まで指定しているため、単に何らかの理由で失敗すればよい例ではありません。公開されている `Book`、`BookId`、`BookTitle`、`Author` の import と構築は成功し、未読の `Book<WantToRead>` に `finish` がないという診断を確認します。代表部分は次の形です。
+ただし、`compile_fail,E0599` と書いても、現在の rustdoc は診断コードが `E0599` と一致するところまでは検査しません。`cargo test --doc` の成功だけを、意図した理由で拒否された証拠にはできません。掲載時には同じ最小例を一時 crate で `cargo check` し、公開されている型の import と構築は成功したあと、未読の `Book<WantToRead>` に `finish` がないという診断になることを確認しました。代表部分は次の形です。
 
 ```text
 error[E0599]: no method named `finish` found for struct `Book<WantToRead>` in the current scope
@@ -67,11 +67,11 @@ error[E0599]: no method named `finish` found for struct `Book<WantToRead>` in th
 1. `Book<WantToRead>` に `finish` を呼べない理由は何ですか。
 2. `start_reading(self)` のあと、同じ元の値を使えますか。先に clone した別の値はどうですか。
 3. `Book<Finished>` が手元にあれば、DB への保存も成功していますか。
-4. 正例とコンパイル拒否の例は、どこでどのコマンドにより確認できますか。
+4. `cargo test --doc` では何を確認でき、意図した拒否理由はどのように確かめますか。
 
 ## 解答
 
 1. `finish` は `impl Book<Reading>` にだけ定義されているためです。未読の本に対する実行時の判定ではありません。
 2. 元の値は移動済みで使えません。ただし clone した別の値は残ります。全スナップショットの一意性や DB の排他は保証しません。
 3. いいえ。遷移メソッドはメモリ上の値を返すだけで、保存処理は別です。
-4. `src/domain/book.rs` の `Book` の rustdoc にあり、`cargo test --doc` で確認します。
+4. `src/domain/book.rs` の `Book` の rustdoc を `cargo test --doc` で実行し、正例の成功と失敗例のコンパイル拒否を確認します。診断コードまでは照合されないため、同じ最小例を `cargo check` し、`Book<WantToRead>` に `finish` がない `E0599` であることを別に確認します。
