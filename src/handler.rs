@@ -135,6 +135,7 @@ pub(crate) async fn add_note(
     Ok((StatusCode::CREATED, Json(note.into())))
 }
 
+// ANCHOR: update_status_handler
 pub(crate) async fn update_status(
     State(state): State<AppState>,
     Path(book_id): Path<BookId>,
@@ -151,6 +152,7 @@ pub(crate) async fn update_status(
         .await?;
     Ok(Json(book.into()))
 }
+// ANCHOR_END: update_status_handler
 
 pub(crate) async fn delete_book(
     State(state): State<AppState>,
