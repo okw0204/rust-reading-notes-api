@@ -1,20 +1,20 @@
 # Rust Reading Notes API
 
-Rust Book を一通り読んだあとに、完成した Web API を HTTP の入口から DB、テストまで追うための日本語コードリーディング教材です。読書記録を題材に、Axum・SQLx・SQLite と Rust の型を結びつけます。
+Rust Book を一通り読んだあとに、完成した Web API を小さな値と関数から HTTP、DB まで段階的に追うための日本語コードリーディング教材です。読書記録を題材に、所有権、型、抽象化、非同期処理を Axum・SQLx・SQLite の実装と結びつけます。
 
 ```text
 Router → handler → ReadingService<R> → BookRepository の SQLite 実装 → DB
             ↑         結果とエラーが呼び出し元へ戻り、HTTP 応答になる
 ```
 
-認証や外部 API は扱わず、値の移動、型の保証、保存の契約を読むことに集中します。第1部は60〜90分、全4部12章は3〜5時間程度が目安です。復習や実験の量に合わせて調整してください。
+認証や外部 API は扱わず、値の移動、型の保証、保存の契約を読むことに集中します。読むだけで完結し、複数日に分けて進められる構成です。未測定の読了時間は固定の目安として示していません。
 
 ## コードリーディング教材
 
 [教材の使い方](docs/book/introduction.md)と[目次](docs/book/SUMMARY.md)から読み始められます。
 ローカルで目次・検索・図付きの教材を開くには、mise でツールを導入します。
 
-**初回のみ：設定の信頼とツールのインストール**
+### 初回のみ：設定の信頼とツールのインストール
 
 リポジトリのルートで実行します。
 
@@ -23,7 +23,7 @@ mise trust mise.toml
 mise install
 ```
 
-**教材を起動する：2回目以降はこれだけ**
+### 教材を起動する：2 回目以降はこれだけ
 
 ```bash
 mise exec -- mdbook serve --hostname 127.0.0.1 --port 3001
@@ -39,12 +39,13 @@ Markdown 原文ではソースの `include` や Mermaid の図が生成 HTML と
 
 | 部 | 内容と入口 |
 | --- | --- |
-| 第1部 | [依存関係の組み立て](docs/book/01-flow/composition.md)、登録時の所有権移動、詳細取得とエラー変換 |
-| 第2部 | [検証済みの値型](docs/book/02-types/validated-values.md)、`Book<S>` の型状態、DB の実行時状態との境界 |
-| 第3部 | [repository trait](docs/book/03-abstraction/repository-trait.md)、ジェネリックな service、Future の借用と `Send`・`Sync`・`Arc` |
-| 第4部 | [service のフェイク](docs/book/04-tests/service-fake.md)、SQLite の条件付き更新、Router の HTTP 統合テスト |
+| 第 1 部：値と関数 | [値を受け取る関数](docs/book/01-values/values-and-functions.md)、本の登録における所有権の移動、部分的な移動、借用、`Clone`、`Result` と `?` |
+| 第 2 部：型と状態 | [検証済みの値型](docs/book/02-types/validated-values.md)、`Book<S>` の型状態、DB の実行時状態との境界 |
+| 第 3 部：型を抽象化する | [repository trait](docs/book/03-abstraction/repository-trait.md)、ジェネリックな service、具体的な Adapter |
+| 第 4 部：非同期と共有 | [Future の借用](docs/book/03-abstraction/async-bounds.md)、`Send`・`Sync`・`'static`・`Arc` |
+| 第 5 部：全体を読み直す | [service のフェイク](docs/book/04-tests/service-fake.md)、SQLite の条件付き更新、Router の HTTP 統合テスト |
 
-各章は「問い → 読む場所と順序 → 解説 → 確認 → 解答」の順です。完成した実装とテストを根拠に読み進められます。
+各章は「問い → 読む場所と順序 → 解説 → 確認 → 解答」の順です。完成した実装と検証済みの例を根拠に読み進められます。
 
 ## 起動
 
@@ -143,7 +144,7 @@ src/
 
 migrations/             # SQLite のスキーマと制約
 tests/api.rs            # 実 DB と Router の統合テスト
-docs/book/              # 全4部12章と導入・目次
+docs/book/              # 全 5 部の教材と導入・目次
 book.toml               # mdBook の設定
 mise.toml               # 教材ビルド用ツールの固定
 ```
@@ -160,4 +161,4 @@ git diff --check
 
 `cargo test` は型状態の doctest（合法な操作と `compile_fail`）、service のフェイク、SQLite の保存契約、Router の統合テストを実行します。API テストは独立したインメモリ SQLite（`sqlite::memory:`）を1接続で使い、repository の `#[sqlx::test]` は SQLx が独立したファイル DB と pool を用意します。後者は `connect_database` の1接続設定を引き継ぎません。どちらもアプリと同じ migration を適用し、手元の `reading-notes.db` を共有しません。フェイクでは保存失敗を注入し、repository テストでは実 SQL、API テストでは HTTP と保存結果を観測します。
 
-`mdbook build` の生成先は `book/` で、Git 管理対象外です。検証の読み方は[第4部](docs/book/04-tests/service-fake.md)で確認できます。
+`mdbook build` の生成先は `book/` で、Git 管理対象外です。検証の読み方は[第 5 部](docs/book/04-tests/service-fake.md)で確認できます。

@@ -6,7 +6,7 @@ DB を読むまで状態が分からない本を、どうやって `Book<S>` と
 
 ## 読む場所と順序
 
-1. `src/repository/sqlite.rs` の `BookRow` と `TryFrom<BookRow> for StoredBook`（[登録章](../01-flow/create-book.md#保存と復元)の抜粋）。
+1. `src/repository/sqlite.rs` の `BookRow` と `TryFrom<BookRow> for StoredBook`（[登録章](../01-values/create-book.md#db-の行から応答用の値へ移す)の抜粋）。
 2. `src/domain.rs` の `ReadingStatus::try_from` と `parse_input`。
 3. `src/domain/book.rs` の `StoredBook`、`restore`、`into_parts`。
 4. `src/service.rs` の `UpdateStatus` と `update_status`。
