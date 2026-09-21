@@ -52,6 +52,16 @@ cargo test --doc
 
 正例はコンパイルして実行され、`compile_fail` はコンパイルが失敗することを検査します。通常のテストが不正な操作の `Err` を調べるのに対し、こちらは操作を記述したプログラム自体が受け入れられないことを確かめます。失敗理由の理解には、例で呼んでいるメソッドと `impl` の対象型を照合してください。この章の抜粋はソースの表示用で、テストの正本は rustdoc です。
 
+`compile_fail,E0599` の `E0599` まで指定しているため、単に何らかの理由で失敗すればよい例ではありません。公開されている `Book`、`BookId`、`BookTitle`、`Author` の import と構築は成功し、未読の `Book<WantToRead>` に `finish` がないという診断を確認します。代表部分は次の形です。
+
+```text
+error[E0599]: no method named `finish` found for struct `Book<WantToRead>` in the current scope
+  = note: the method was found for
+          - `Book<Reading>`
+```
+
+これにより、非公開項目へのアクセスや誤った import ではなく、意図した型状態の規則で拒否されたと切り分けられます。
+
 ## 確認
 
 1. `Book<WantToRead>` に `finish` を呼べない理由は何ですか。

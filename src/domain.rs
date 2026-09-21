@@ -19,6 +19,7 @@ pub struct BookId(pub i64);
 #[serde(transparent)]
 pub(crate) struct NoteId(pub(crate) i64);
 
+// ANCHOR: reading_status
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ReadingStatus {
@@ -63,6 +64,7 @@ impl TryFrom<&str> for ReadingStatus {
         }
     }
 }
+// ANCHOR_END: reading_status
 
 #[derive(Debug, Clone)]
 pub(crate) struct Note {

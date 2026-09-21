@@ -6,15 +6,38 @@
 
 ## 読む場所と順序
 
-1. `src/domain/text.rs` の `BookTitle`、`normalize`、`TryFrom<String>`、参照と所有権を返すメソッド。
+1. `src/handler.rs` の `CreateBookRequest` と `create_book`。
 2. `src/service.rs` の `CreateBook` と `create_book`、`src/error.rs` の `From<InvalidText>`。
-3. `src/repository/sqlite.rs` の `TryFrom<BookRow>`、`src/handler.rs` の `From<StoredBook> for BookResponse`。
-4. 同じ値型ファイルの `Author`・`NoteBody` と各テスト。ID は `src/domain.rs` の `BookId`。
+3. `src/domain/text.rs` の `BookTitle`、`normalize`、`TryFrom<String>`、参照と所有権を返すメソッド。
+4. `src/repository/sqlite.rs` の `TryFrom<BookRow>`、`src/handler.rs` の `From<StoredBook> for BookResponse`。
+5. 同じ値型ファイルの `Author`・`NoteBody` と各テスト。ID は `src/domain.rs` の `BookId`。
 
 以下の抜粋には、書名の検証で使う共通関数とエラー型、隣接する値型の定義も含まれます。
 
 ```rust,ignore
 {{#include ../../../src/domain/text.rs:validated_title}}
+```
+
+同じ構築規則を、HTTP 入力と DB の保存値という 2 つの境界から使います。
+
+```mermaid
+flowchart LR
+    Http[HTTP の String] --> Service[ReadingService::create_book]
+    Service --> Input[BookTitle::try_from]
+    Input -->|成功| Valid[BookTitle]
+    Input -->|空白だけ| BadRequest[Validation / 400]
+    Db[(SQLite)] --> Row[BookRow]
+    Row --> Stored[BookTitle::try_from]
+    Stored -->|成功| Valid
+    Stored -->|空白だけ| ServerError[InvalidStoredValue / 500]
+```
+
+```rust,ignore
+{{#include ../../../src/service.rs:create_book_service}}
+```
+
+```rust,ignore
+{{#include ../../../src/repository/sqlite.rs:book_row_conversion}}
 ```
 
 ## 解説
@@ -46,7 +69,7 @@
 
 service の `BookTitle::try_from(input.title)?` は `From<InvalidText> for AppError` を利用して `Validation` に変換します。DB 行の復元では同じ変換に `map_err` を付け、`InvalidStoredValue` に明示的に分類し直しています。
 
-値型の `InvalidText` 自体は HTTP の400や500を知りません。規則を共通化しても、失敗を誰の責任として扱うかは値の入ってきた境界に依存します。「同じ検証だから同じステータス」という結論にはなりません。
+値型の `InvalidText` 自体は HTTP の 400 や 500 を知りません。規則を共通化しても、失敗を誰の責任として扱うかは値の入ってきた境界に依存します。「同じ検証だから同じステータス」という結論にはなりません。
 
 ## 確認
 
@@ -60,6 +83,6 @@ service の `BookTitle::try_from(input.title)?` は `From<InvalidText> for AppEr
 1. 前後の空白が除去済みであることと、空でないことです。内部の空白は残ります。
 2. この `TryFrom` 実装の失敗型の指定と、その型への参照です。ここでは両者が `InvalidText` を表します。
 3. SQL には `as_str` で借用し、出力 DTO には `into_inner` で所有権を移します。
-4. 利用者が送った値の不正と、保存済みデータの不正を区別できなくなります。実装は DB 境界の `map_err` で後者を500の原因として扱います。
+4. 利用者が送った値の不正と、保存済みデータの不正を区別できなくなります。実装は DB 境界の `map_err` で後者を 500 の原因として扱います。
 
 `src/domain/text.rs` の `title_is_trimmed_and_cannot_be_blank` などは、入力例と保証を対応させて読めます。次の[型状態](typestate.md)では、内容だけでなく呼べる操作を型で絞ります。
