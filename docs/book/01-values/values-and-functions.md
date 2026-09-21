@@ -24,11 +24,11 @@ HTTP から届いた書名の `String` は、どの関数へ所有権を渡し�
 
 `normalize` の引数は `value: String` です。`&str` ではないため、呼び出し側は `String` の所有権をこの関数へ移します。関数内の `value` が新しい所有者です。
 
-```text
-入力の String
-  └─ move → normalize の value
-                  ├─ borrow → trim が返す &str
-                  └─ allocate → 成功時に新しい String
+```mermaid
+flowchart LR
+    Input[入力の String] -->|move| Owned[normalize の value]
+    Owned -->|borrow| Trimmed[trim が返す &str]
+    Trimmed -->|allocate| Output[成功時の新しい String]
 ```
 
 `value.trim()` は元の文字列を変更しません。`trim` は `value` を借用し、前後の空白を除いた範囲を指す `&str` を返します。変数名を同じ `value` にしているため、以降の `value` はこの参照です。元の `String` は関数が所有したままで、参照が使われる間は破棄されません。

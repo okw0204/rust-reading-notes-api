@@ -53,6 +53,16 @@ let title = request.title;
 println!("{request:?}");
 ```
 
+コンパイラ診断では、移動元と、その後に構造体全体を借りた箇所が対応付けられます。
+
+```text
+error[E0382]: borrow of partially moved value: `request`
+  let title = request.title;
+              ------------- value partially moved here
+  println!("{request:?}");
+             ^^^^^^^ value borrowed here after partial move
+```
+
 拒否される理由は `request.title` の所有権が `title` へ移ったことです。`Debug` の不足やフィールドの可視性ではありません。残っている `request.author` だけを使う例とは区別します。
 
 構造体からすべての値を取り出すことを明示したい場合は、分解も使えます。
@@ -67,11 +77,12 @@ let Request { title, author } = request;
 
 `normalize` は `String` を受け取り、`trim` で内容を借用してから、結果を所有する `String` を作ります。
 
-```text
-String を受け取る
-  → trim で &str を借りる
-  → 空なら Err
-  → 必要な範囲を新しい String にして Ok
+```mermaid
+flowchart LR
+    Input[String を受け取る] -->|borrow| Trimmed[trim で得る &str]
+    Trimmed --> Check{空か}
+    Check -->|はい| Error[Err]
+    Check -->|いいえ・allocate| Output[新しい String を Ok で返す]
 ```
 
 引数を `&str` にする別案も成立します。
@@ -97,6 +108,18 @@ let mut title = "  Rust Book  ".to_owned();
 let trimmed = title.trim();
 title.clear();
 println!("{trimmed}");
+```
+
+診断は `trim` の不変借用が後の `println!` まで使われることと、その途中で `clear` が可変借用を必要とすることを示します。
+
+```text
+error[E0502]: cannot borrow `title` as mutable because it is also borrowed as immutable
+  let trimmed = title.trim();
+                ----- immutable borrow occurs here
+  title.clear();
+  ^^^^^^^^^^^^^ mutable borrow occurs here
+  println!("{trimmed}");
+             ------- immutable borrow later used here
 ```
 
 `trimmed` が `title` の内容を指しているのに `clear` が内容を変更すると、参照が有効なままではいられません。拒否理由は、同じ期間の不変借用と可変借用の衝突です。`trimmed` を最後に使った後なら `title.clear()` を実行できます。
