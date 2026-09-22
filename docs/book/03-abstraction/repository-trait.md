@@ -2,13 +2,26 @@
 
 ## 問い
 
-service は SQL を書かずに、保存の成功・未検出・競合をどう区別できるのでしょうか。trait の各メソッドを、操作・引数・結果・失敗の4点から読みます。
+service は SQL を書かずに、保存の成功・未検出・競合をどう区別できるのでしょうか。`BookRepository` をメソッド一覧としてではなく、SQLite とフェイクがともに満たす Interface として読みます。
 
 ## 読む場所と順序
 
 1. `src/repository.rs` の `BookRepository` 全体。
-2. `src/repository/sqlite.rs` の `impl BookRepository for SqliteBookRepository`、`insert_book`、`find_book`。
-3. `src/service.rs` の `create_book` と `update_status`。
+2. `src/service.rs` の `create_book` と `update_status`。
+3. `src/repository/sqlite.rs` の `impl BookRepository for SqliteBookRepository`、`insert_book`、`find_book`、`update_book_status`。
+4. `src/service/tests/fake.rs` の `impl BookRepository for FakeBookRepository` と `update_book_status`。
+5. `src/repository/sqlite.rs` と `src/service/tests.rs` にある、古い状態からの更新を拒否するテスト。
+
+```mermaid
+flowchart LR
+    Service[ReadingService の判断] --> Interface[BookRepository Interface]
+    Interface --> Sqlite[SqliteBookRepository]
+    Interface --> Fake[FakeBookRepository]
+    Sqlite --> DB[(SQLite)]
+    Fake --> Memory[(BTreeMap)]
+```
+
+`BookRepository` は別プロセスやデータの通り道ではありません。service が永続化を利用する Seam に置かれた Interface です。SQLite Adapter とフェイク Adapter は、同じ Interface を異なる方法で実装します。
 
 ```rust,ignore
 {{#include ../../../src/repository.rs:repository_contract}}
@@ -16,48 +29,89 @@ service は SQL を書かずに、保存の成功・未検出・競合をどう�
 
 ## 解説
 
-### 引数と結果が責任の境界を示す
+### Interface は型シグネチャだけではない
 
-`insert_book` は `String` ではなく検証済みの `&BookTitle` と `&Author` を借り、採番済みの `StoredBook` を返します。未読で登録するという規則は rustdoc と SQLite の `INSERT` にあります。引数の型だけでは、実装が必ず未読で保存することまでは保証されません。契約の文章と実装・テストも併せて読む必要があります。
+trait の宣言からは、呼び出せる操作、引数、完了時の値、返り得るエラー型を読めます。しかし、次のような意味は型だけでは表し切れません。
 
-`find_book` は `Result<StoredBook, AppError>` を返し、未検出は `NotFound` です。一方、`list_notes` の空の一覧は成功です。本の存在を必ず確認する操作ではないので、service の詳細取得は先に `find_book` を呼びます。
+| 操作 | 入力と成功時の値 | 呼び出し側が頼る規則 |
+| --- | --- | --- |
+| `insert_book` | 検証済みの書名・著者を借り、採番済みの本を返す | 新しい本は未読として保存する |
+| `list_books` | 状態は任意、結果は ID 順の一覧 | 指定なしは全件、該当なしは空の一覧 |
+| `find_book` | ID から本を返す | 未検出は `NotFound` |
+| `list_notes` | 本の ID からメモ一覧を返す | 本やメモがなくても空の一覧 |
+| `insert_note` | 検証済みの本文を借り、採番済みのメモを返す | 本がなければ `NotFound` |
+| `update_book_status` | 取得時の状態と遷移済みの本を受け取る | 状態不一致と取得後の削除は `Conflict` とし、その場合は変更しない |
+| `delete_book` | ID で本を削除する | 関連メモも削除し、本がなければ `NotFound` |
 
-`update_book_status` は取得時の `expected` と遷移済みの `next` を受け取ります。保存状態が一致しない場合も、取得後に削除された場合も `Conflict` です。service は遷移を判断し、repository は保存条件を確かめます。trait は SQL の文法や接続方法を指定せず、service が利用する約束を定めています。
+たとえば `insert_book` の引数が値型なので、空白だけの書名をこの Seam へ持ち込むことは防げます。一方、実装が未読で保存することや、`list_books` が ID 順であることは型からは証明できません。rustdoc、Adapter の実装、観測可能な結果を確かめるテストまでが Interface の根拠です。
 
-### impl Future は結果が得られるまでの処理を表す
+`update_book_status` では、service が実行時の状態を見て合法な遷移を作り、repository が取得時の状態を前提に保存できるか調べます。型状態がメモリ上の操作を制限し、repository の条件付き更新が永続化の競合を検出します。どちらか一方で両方を保証しているわけではありません。
+
+### impl Future は実装ごとの具体型を隠す
 
 返り値の `impl Future<Output = Result<StoredBook, AppError>> + Send` を分解します。
 
 | 記述 | 読み方 |
 | --- | --- |
-| `impl Future` | 実装側が決める、`Future` を実装した具体型を返す。呼び出し側にその型名を公開しない |
-| `Output = Result<StoredBook, AppError>` | 完了時に得られる値は、成功した本かアプリケーションのエラー |
+| `impl Future` | Adapter が決める、`Future` を実装した一つの具体型を返す。呼び出し側には型名を公開しない |
+| `Output = Result<StoredBook, AppError>` | 完了時に得られる値は、保存された本かアプリケーションのエラー |
 | `+ Send` | 返す Future はスレッド間で移動可能でなければならない |
 
-`Future` は将来の結果に至る処理を表す値で、完了済みの本そのものではありません。service は `.await` で完了時の `Result` を受け取ります。SQLite 実装の `async fn insert_book(...) -> Result<...>` も、呼び出すとコンパイラが生成する Future を返すため、この契約を実装できます。`async fn` の本文は呼び出しただけでは実行されず、Future が実行器に進められると動きます。
+`impl Trait` は「型が未定」という意味ではありません。SQLite Adapter とフェイク Adapter の各メソッドには、それぞれコンパイラが決める具体的な Future の型があります。Interface はその名前を隠し、呼び出し側が利用できる能力だけを示します。
 
-`impl Future` は動的ディスパッチの指定ではありません。この教材は `dyn BookRepository` を使わず、`ReadingService<R>` の具体的な `R` に対してメソッドを呼びます。コンパイル時に実装が決まる静的ディスパッチです。返す Future の具体型も各実装・メソッドで決まり、呼ぶたびに任意の異なる型を選べるという意味ではありません。
+Adapter 側は `async fn insert_book(...) -> Result<...>` と書けます。`async fn` の呼び出しが返す Future が、この `impl Future` の契約を満たすためです。service は具体的な Future の名前を知らなくても `.await` して `Result` を受け取れます。Future が借用する値や `Send` の要求元は、次の部で詳しく読みます。
 
-### SQLite で契約を実現する
+### SQLite Adapter は実際の保存を担う
 
 ```rust,ignore
 {{#include ../../../src/repository/sqlite.rs:conditional_update}}
 ```
 
-`WHERE` に ID と期待する状態を入れ、`fetch_optional` の `None` を `Conflict` に変えています。SQL の失敗は `.await?` から `AppError` へ伝わり、行が返った場合は `try_into` で保存値を検証します。service はこれらの SQL の手順ではなく、成功とエラーの契約を頼りに処理を組み立てられます。
+SQLite Adapter は SQL、接続、DB 行とドメイン型の変換を内部に隠します。状態更新では `WHERE` に ID と期待する状態を入れ、比較と書き込みを一つの SQL にしています。`fetch_optional` の `None` は `Conflict` へ変換し、SQL の失敗は `AppError::Database`、不正な保存値は `InvalidStoredValue` として返します。
+
+service は `WHERE` 句や `BookRow` を知りません。`find_book` の `NotFound`、条件付き保存の `Conflict`、成功時の `StoredBook` という Interface を使って処理を組み立てます。そのため SQL の実装知識が service の各メソッドへ散らばりません。
+
+### フェイク Adapter は同じ契約を制御可能にする
+
+```rust,ignore
+{{#include ../../../src/service/tests/fake.rs:fake_update}}
+```
+
+フェイクも `BookRepository` を実装し、`BTreeMap` の現在状態が `expected` と一致するときだけ更新します。状態不一致と取得後の削除を `Conflict` にし、注入した保存エラーを変更前に返します。常に成功するだけの代用品ではありません。
+
+2 つの Adapter から確認できることは異なります。
+
+| Adapter | 確認できること | これだけでは確認できないこと |
+| --- | --- | --- |
+| SQLite | 実 SQL の条件、行変換、migration と制約、DB エラー | service の分岐を狙った場所で失敗させたときの判断 |
+| フェイク | 入力検証、状態遷移、保存失敗の伝播を決まった順序で観測できる | SQL、SQLite の制約、DB 行からの復元 |
+
+両方に古い取得結果と取得後の削除を拒否するテストがあります。これは実装を同じにするためではなく、service が頼る条件付き更新の契約をどちらの Adapter も満たすと確かめるためです。SQLite とフェイクという実在する 2 つの差し替え先があるので、この Seam は将来の可能性だけを想定した抽象化ではありません。
+
+### 関連型や dyn Trait を採用しない理由
+
+関連型は、Adapter ごとに結果の型を変える必要がある場合に候補になります。たとえば本の型を `type Book` にすると、service 側には `R: BookRepository<Book = StoredBook>` のような等値制約が必要です。このアプリではどの Adapter も同じ `StoredBook`、`Note`、`AppError` を受け渡すこと自体が Interface なので、関連型にしても差し替えの自由は増えず、読むべき型だけが増えます。
+
+`dyn BookRepository` は実行時に Adapter を選び、trait object を通して動的ディスパッチしたい場合の候補です。しかし現在の `BookRepository` はメソッドの返り値に `impl Future` を使うため、そのままでは dyn 互換ではありません。Future を box 化するなど、dyn 互換の別の Interface が必要になります。
+
+このアプリは起動時に SQLite、service テストのコンパイル時にフェイクと、利用する具体型をそれぞれ決められます。実行中に Adapter を入れ替えないため、Future の box 化、追加の割り当て、動的ディスパッチを導入する理由がありません。関連型や `dyn Trait` が使えないから避けているのではなく、現在の差異を表すにはジェネリックな `R: BookRepository` が最も小さい Interface だから採用しています。
 
 ## 確認
 
-1. `BookRepository` は SQL の書き方と、service が使う操作のどちらを定めていますか。
-2. `find_book` と `list_notes` は、対象の本がない場合に同じ結果を返しますか。
-3. `impl Future` を見て「実行時に実装を選ぶ」と判断できますか。
-4. `update_book_status` の型だけで、期待する状態の比較が実装済みだと保証できますか。
+1. `BookRepository` の型シグネチャだけでは分からず、rustdoc やテストまで読む必要がある規則を 2 つ挙げてください。
+2. `impl Future` は、呼び出すたびに任意の型を返したり、実行時に Adapter を選んだりする指定ですか。
+3. SQLite Adapter とフェイク Adapter は、それぞれ何を確かめるために必要ですか。
+4. 2 つの Adapter で条件付き更新のテストを持つのは、内部実装を同じにするためですか。
+5. この Interface で関連型を追加しても利点が小さいのはなぜですか。
+6. 現在の `BookRepository` をそのまま `dyn BookRepository` として使わない理由は何ですか。
 
 ## 解答
 
-1. service が使う操作・引数・結果・失敗の契約です。SQLite 実装が SQL を使ってその契約を満たします。
-2. いいえ。`find_book` は `NotFound`、`list_notes` は空の一覧を返す契約です。
-3. できません。`impl Future` は具体型の名前を隠す返り値で、この service はジェネリクスによる静的ディスパッチを使っています。
-4. できません。型は引数と結果を制約しますが、比較の意味は rustdoc・実装・競合テストで確かめます。
+1. 例として、新しい本を未読で保存すること、一覧を ID 順に返すこと、状態不一致では保存内容を変えず `Conflict` を返すことがあります。型は入出力を制約しますが、これらの意味までは実装しません。
+2. いいえ。各 Adapter の各メソッドで具体型は決まっています。`impl Future` はその型名を隠し、`Future`、`Output`、`Send` という利用可能な契約だけを公開します。
+3. SQLite は実 SQL、DB 制約、行変換を確かめます。フェイクは service の判断とエラー伝播を、任意の待ち時間や DB の状態操作に頼らず確かめます。
+4. いいえ。内部は SQL と `BTreeMap` で異なります。service が頼る、古い状態や削除後の更新を拒否する契約を両方が満たすことを確かめています。
+5. どの Adapter も同じドメイン型を返すことが契約であり、service 側に関連型の等値制約を追加するだけになるためです。
+6. 返り値の `impl Future` を持つ現在の trait は dyn 互換ではありません。また Adapter は実行時に切り替えないため、box 化や動的ディスパッチを伴う別 Interface を導入する必要もありません。
 
-次は[ジェネリックな service](generic-service.md)で、具体的な実装が決まる場所を追います。
+次は[ジェネリックな service](generic-service.md)で、SQLite とフェイクの具体型がどこで決まり、同じ service の呼び出しがどちらへ届くかを追います。
