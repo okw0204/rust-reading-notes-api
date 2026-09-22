@@ -2,65 +2,188 @@
 
 ## 問い
 
-service 内のローカル値を repository に貸したまま `.await` できるのはなぜでしょうか。Future の制約と、Router に渡す共有状態の制約を区別します。
+`create_book` を呼ぶと、いつ処理が始まり、どの Future が何を保持するのでしょうか。service 内のローカル値を repository に貸したまま `.await` できる理由を追い、`Send`、`Sync`、`'static`、`Arc` の対象と要求元を区別します。
 
 ## 読む場所と順序
 
-1. `src/service.rs` の `create_book`。
-2. `src/repository.rs` の `BookRepository: Send + Sync` と `insert_book` の返り値。
-3. `src/repository/sqlite.rs` の `insert_book`。
-4. `src/app.rs` の `AppState` と `build_app`、`src/handler.rs` の `create_book`。
+1. `src/handler.rs` の `create_book`。
+2. `src/service.rs` の `ReadingService::create_book`。
+3. `src/repository.rs` の `BookRepository: Send + Sync` と `insert_book` の返り値。
+4. `src/repository/sqlite.rs` の `insert_book`。
+5. `src/app.rs` の `AppState` と `build_app`。
+6. Axum 0.8.9 の `Handler` と `Router<S>`、Tokio 1.53.1 の `spawn` の公開 Interface。
+
+```mermaid
+sequenceDiagram
+    participant Axum
+    participant Handler as handler の Future
+    participant Service as service の Future
+    participant Repository as repository の Future
+    participant SQLite
+    Axum->>Handler: create_book を呼び Future を得る
+    Handler->>Service: create_book(input) を呼び .await
+    Note over Handler,Service: Handler は AppState と request を所有
+    Service->>Repository: insert_book(&title, &author) を呼び .await
+    Note over Service,Repository: Service は title と author を所有
+    Repository->>SQLite: fetch_one(...).await
+    SQLite-->>Repository: BookRow
+    Repository-->>Service: StoredBook
+    Service-->>Handler: StoredBook
+    Handler-->>Axum: HTTP response
+```
+
+3 つの `async fn` の呼び出しは、入れ子になった Future を作ります。外側の Future が内側を `.await` するため、内側が借りている値も完了まで外側に保持されます。
+
+## 解説
+
+### 呼び出し、Future の生成、進行を分ける
+
+```rust,ignore
+{{#include ../../../src/handler.rs:create_book_handler}}
+```
+
+`async fn` の呼び出しは、その関数を完了まで実行して結果を直接返すのではなく、処理を表す Future を返します。実行器が Future を poll すると本文が進み、内側の `.await` では対象の Future を poll します。対象が `Ready` ならそのまま進み、`Pending` なら再開に必要な状態を保持して呼び出し元へ制御を返します。
+
+したがって、`.await` は「新しいスレッドを作る命令」でも「必ず停止する命令」でもありません。呼び出し、Future の生成、poll による進行、`Pending` の場合の停止は別の出来事です。
+
+この handler の Future は、extractor から受け取った `AppState` と `CreateBookRequest` を所有します。`request.title` と `request.author` は `CreateBook` へ移動し、`state.service.create_book(...)` の呼び出しで service の Future を作ります。`.await` している間も、handler の Future は `AppState`、つまり service を共有所有する `Arc` を保持します。
+
+### service の Future がローカル値を保持する
 
 ```rust,ignore
 {{#include ../../../src/service.rs:create_book_service}}
 ```
 
-## 解説
+service の Future は `input` を値で受け取り、`BookTitle` と `Author` へ変換します。変換後の `title` と `author` もこの Future が所有するローカル値です。一方、`&self` は `Arc` が指す `ReadingService` の共有借用です。
 
-### await 中も借りた値が有効であること
+`insert_book(&title, &author)` が返す repository の Future は、次の 3 つを借用できます。
 
-`async fn create_book` を呼ぶと、引数や処理の途中経過を保持する Future が返ります。Future が進められると `title` と `author` を作り、repository の Future を `.await` します。未完了なら呼び出し元の処理も一時停止し、再開に必要な値や借用を保ちます。`.await` は必ず停止する命令ではなく、相手が既に完了できればそのまま先へ進みます。
+- `&self.repository`
+- `&title`
+- `&author`
 
-`insert_book(&title, &author)` の Future は、service が所有する repository とローカル値を借用できます。service はその場で完了を待つため、借用先は待機中も有効です。SQLite 実装も `title.as_str()` などを SQL に bind して `.await` しています。
+service は repository の Future をその場で `.await` します。内側の Future が未完了なら、外側の service の Future が `title` と `author`、および service への借用を保持するため、参照先は再開時にも有効です。参照先より内側の Future だけを長く生存させる形は、借用検査が拒否します。
 
-trait の返り値には `+ Send` があり、無条件の `+ 'static` はありません。この trait 内の `impl Future` は引数の参照のライフタイムを取り込めます。独立したタスクに切り離すのではなく、呼び出し元の Future の内側で借用した Future を待つ形です。参照先が無効になる形で Future を持ち出すことは、借用検査が拒否します。
+```rust,ignore
+{{#include ../../../src/repository/sqlite.rs:insert_book_sqlite}}
+```
+
+SQLite Adapter でも、`title.as_str()` と `author.as_str()` を query に bind し、`fetch_one(...).await` の完了まで使います。ここで新しい `String` を割り当てたり、タイトルと著者を clone したりする必要はありません。呼び出し元が所有する値を、入れ子の Future が有効な範囲だけ借りています。
+
+### repository の Future に無条件の static は要らない
+
+```rust,ignore
+{{#include ../../../src/repository.rs:repository_contract}}
+```
+
+`insert_book` の返り値は `impl Future<Output = Result<StoredBook, AppError>> + Send` です。無条件の `+ 'static` はありません。返す具体的な Future の型は隠していますが、呼び出し側は `Output` と `Send` を利用でき、Future は引数の参照に結び付いた有効期間を取り込めます。
+
+借用した Future を同じ処理の内側で待つ最小例は成立します。
+
+```rust
+async fn length_after_yield(value: &str) -> usize {
+    tokio::task::yield_now().await;
+    value.len()
+}
+
+#[tokio::main(flavor = "current_thread")]
+async fn main() {
+    let owned = String::from("Rust");
+    assert_eq!(length_after_yield(&owned).await, 4);
+}
+```
+
+この例は Tokio 1.53.1 で `cargo check` が成功します。`owned` を所有する `main` の Future の内側で借用し、その場で完了を待つためです。
+
+同じ借用を独立した task へ渡す次の別案は成立しません。
+
+```rust,compile_fail
+fn spawn_borrowed(value: &str) {
+    tokio::spawn(async move {
+        println!("{value}");
+    });
+}
+```
+
+Tokio 1.53.1 の `spawn` は、渡す Future と出力へ `Send + 'static` を要求します。この例は E0521 となり、関数本体でだけ有効な参照が `'static` を要求する task へ逃げることを理由に拒否されます。service の実装は task を切り離さず、その場で `.await` するため、この追加制約を必要としません。
 
 ### Send と Sync は別の対象を見る
 
-| 制約 | 意味 | この教材で見る場所 |
+| 制約 | 対象 | このアプリで必要になる理由 |
 | --- | --- | --- |
-| `T: Send` | `T` の所有権をスレッド間で移動できる | repository 自身と各操作が返す Future |
-| `T: Sync` | `&T` をスレッド間で渡して共有できる | 共有借用される repository |
-| `T: 'static` | `T` が非 static な参照に依存しない | Router に保持させる共有状態 |
+| `BookRepository: Send` | repository の所有値 | repository を所有する service と `AppState` をスレッド間で移動可能にする |
+| `BookRepository: Sync` | repository への共有参照 | 待機中に保持する `&R` をスレッド間で移動可能にする |
+| 返される Future の `Send` | 各 repository 操作の途中状態 | handler まで入れ子になった Future をスレッド間で移動可能にする |
+| `AppState: 'static` | Router が所有する状態の型 | Router の外にある短命な参照へ状態を依存させない |
 
-repository の Future が待機中に `&self` を保持するとき、その参照が `Send` であるには参照先の repository が `Sync` である必要があります。一般に `&T: Send` の条件は `T: Sync` です。`BookRepository: Send + Sync` と各メソッドの `+ Send` は、このようにつながります。ただし repository が `Sync` でさえあれば、どんなメソッドの Future も `Send` になるわけではありません。Future が停止をまたいで保持するほかの値や参照も条件を満たす必要があります。
+一般に `&T: Send` となるには `T: Sync` が必要です。repository の Future が `&self` を待機中に保持するため、`BookRepository: Sync` と Future の `Send` は関係します。ただし、repository が `Sync` なら Future が自動的に `Send` になるわけではありません。停止をまたいで保持するすべての値が検査対象です。
 
-`Send` は移動を許す条件であり、毎回スレッドが変わる保証ではありません。`.await` はスレッドを作る操作でもありません。実行器が処理を進め、必要なら待機し、再開するという足場だけを押さえて先へ進めます。
+たとえば、`Send` ではない `Rc` を `.await` の後でも使う Future は拒否されます。
 
-### Router の状態と 'static
+```rust,compile_fail
+use std::{future::Future, rc::Rc};
 
-Axum 0.8 の `Router<S>` の構築・ルーティングで使う `impl` は `S: Clone + Send + Sync + 'static` を要求します。また `Handler` trait の関連型は `type Future: Future<Output = Response> + Send + 'static` です。このアプリでは `with_state(state)` へ渡す `AppState` と、`State<AppState>` を受け取る handler がその条件を満たす必要があります。
+async fn holds_rc() {
+    let value = Rc::new("Rust");
+    tokio::task::yield_now().await;
+    println!("{value}");
+}
 
-`AppState` は `Arc<ReadingService<SqliteBookRepository>>` を所有し、repository は `SqlitePool` を所有します。`build_app` のスタック上のローカル変数への参照を Router に残していません。ここでの `T: 'static` は「値が永遠に実行される・破棄されない」ではなく、非 static な参照に依存しない型の制約です。所有する `String` のような値も満たせますし、不要になれば通常どおり破棄されます。`&'static T` という参照そのものの有効期間とは区別してください。
+fn require_send(_: impl Future<Output = ()> + Send) {}
 
-共有状態や handler 全体の Future が `'static` でも、その内側で一時的に借りるすべての参照や repository の Future が `'static` である必要はありません。handler が所有する状態ハンドルや、service の Future が保持するローカル値を、その呼び出しの間だけ借用できます。外側の Future が外部の短命な参照に依存しないことと、実行中に内部で借用を使うことは両立します。
+fn main() {
+    require_send(holds_rc());
+}
+```
 
-### Arc は共有所有を担当する
+この例は「`Rc<&str>` が `.await` をまたいで使われるため、`holds_rc` の Future は `Send` ではない」という診断で失敗します。import や可視性ではなく、意図した `Send` の規則で拒否されます。`Send` は移動できるという条件であり、実際に毎回別のスレッドで再開する保証ではありません。
 
-`Arc<T>` は参照カウントを原子的に管理し、複数の所有者が同じ `T` を保持できるようにします。内部の任意の `T` を自動でスレッド安全にする仕組みではありません。通常、`Arc<T>` が `Send + Sync` になるにも `T: Send + Sync` が必要です。
+### 制約の要求元を公開 Interface で確かめる
 
-このアプリの共有先は、共有利用を想定した `SqlitePool` を持つ service です。[フェイクの章](../04-tests/service-fake.md)では、共有するメモリの変更を `Mutex` で保護します。`Arc` は所有者の共有、`Mutex` は排他的な変更と、役割を分けて読みます。
+`Cargo.lock` で固定された Axum 0.8.9 と Tokio 1.53.1 の公開 Interface を見ると、制約の出所を分けられます。
+
+| 要求元 | 公開 Interface の要点 | このアプリへの影響 |
+| --- | --- | --- |
+| [`axum::handler::Handler`](https://docs.rs/axum/0.8.9/axum/handler/trait.Handler.html) | handler の Future は `Future<Output = Response> + Send + 'static` | `create_book` から入れ子になる Future も `Send` を満たす必要がある |
+| [`axum::Router<S>`](https://docs.rs/axum/0.8.9/axum/struct.Router.html) | ルーティングを構築する `impl` は `S: Clone + Send + Sync + 'static` | `AppState` を clone・移動・共有でき、短命な外部参照に依存させない |
+| [`tokio::spawn`](https://docs.rs/tokio/1.53.1/tokio/task/fn.spawn.html) | task の Future と出力は `Send + 'static` | task を切り離す別案でだけ必要となり、現在の service 経路は要求しない |
+
+Axum の handler 関数に対する `Handler` 実装は、関数が返す Future に `Send`、状態 `S` に `Send + Sync + 'static` を要求します。Router 側では状態に `Clone` も要求します。プロジェクトの `BookRepository: Send + Sync` と各操作の Future に付いた `+ Send` は、これらの外側の条件までつながっています。
+
+### 型の static と参照の有効期間を分ける
+
+`T: 'static` は「この値を永遠に実行する」「この値を破棄しない」という意味ではありません。`T` が非 `static` な参照に依存しない型であるという条件です。所有する `String` や `SqlitePool` のような値も満たせ、所有者が不要になれば通常どおり破棄されます。
+
+一方、`&'static T` は参照そのものがプログラム全体にわたって有効という別の表現です。`AppState: 'static` から、repository の各メソッドが受け取る `&BookTitle` まで `'static` でなければならないとは導けません。
+
+handler の Future は `AppState` を所有し、その中の `Arc` が service を共有所有します。その所有範囲の内側で service を借り、さらに service の Future が所有する `title` と `author` を repository の Future が一時的に借ります。外側の型が短命な外部参照に依存しないことと、実行中に内側で期限付きの借用を使うことは両立します。
+
+### Arc は共有所有だけを担当する
+
+```rust,ignore
+{{#include ../../../src/app.rs:composition}}
+```
+
+`AppState` の clone で増えるのは `Arc` の共有所有者です。`ReadingService` や SQLite DB 全体を clone するわけではありません。`Arc<T>` は参照カウントを原子的に管理しますが、任意の `T` を自動でスレッド安全に変えません。通常、`Arc<T>` が `Send + Sync` を満たすにも、内側の `T` が `Send + Sync` を満たす必要があります。
+
+このアプリでは `ReadingService<SqliteBookRepository>` が共有利用を想定した `SqlitePool` を所有します。次の[フェイクで service の判断を確かめる](../04-tests/service-fake.md)では、フェイクが `Arc<Mutex<FakeState>>` を使います。`Arc` は所有者を共有し、`Mutex` は共有中の変更を排他的にするため、役割は別です。
 
 ## 確認
 
-1. `title` と `author` を借用する repository の Future に、無条件の `'static` は必要ですか。
-2. Future が `&self` を待機中に保持するとき、repository の `Sync` はどう関係しますか。
-3. `.await` のたびに別スレッドへ移動しますか。
-4. `AppState: 'static` は、service が永遠に生存するという意味ですか。`Arc` だけで内部の安全性を保証できますか。
+1. `async fn` を呼ぶことと、その本文が進むことは同じですか。
+2. `title` と `author` を借用する repository の Future に、無条件の `'static` は必要ですか。
+3. service の Future と repository の Future は、それぞれ何を所有し、何を借りますか。
+4. Future が `&self` を待機中に保持するとき、repository の `Sync` はどう関係しますか。
+5. `.await` のたびに別スレッドへ移動しますか。
+6. 同じ `&str` の Future をその場で待てても、`tokio::spawn` へ渡せない場合があるのはなぜですか。
+7. `AppState: 'static` は service が永遠に生存するという意味ですか。`Arc` だけで内部の安全性を保証できますか。
 
 ## 解答
 
-1. 必要ありません。service の Future の中で借用先を保持して完了を待ちます。trait の Future にもその制約は付いていません。
-2. `&R` をスレッド間で渡せるには `R: Sync` が必要なので、借用を保持する Future の `Send` を満たす条件になります。ほかの保持値も検査対象です。
-3. いいえ。`Send` は移動可能性であり、移動の頻度や実行順の保証ではありません。
-4. 非 static な参照に依存しないという意味で、破棄はできます。`Arc` は共有所有を提供しますが、内部の型も共有・移動の条件を満たす必要があります。
+1. 同じではありません。呼び出しは Future を返し、実行器による poll で本文が進みます。`.await` した Future が `Pending` の場合だけ、状態を保持して停止します。
+2. 必要ありません。service の Future が参照先を保持し、その内側で repository の Future を完了まで待ちます。
+3. service の Future は入力から作った `title` と `author` を所有し、`Arc` が所有する service を借ります。repository の Future は repository と `title`、`author` を借ります。
+4. `&R` をスレッド間で移動できるには `R: Sync` が必要なので、借用を保持する Future の `Send` を満たす条件の一つになります。ほかの保持値も検査対象です。
+5. いいえ。`Send` は移動可能性であり、移動の頻度、実行スレッド、実行順を保証しません。
+6. その場で待つ外側の Future は参照先を保持できますが、`tokio::spawn` は呼び出し元から独立して生存できる `Send + 'static` な Future を要求するためです。
+7. 短命な外部参照に依存しない型という意味で、値は破棄できます。`Arc` は共有所有を提供しますが、内側の型が必要な `Send` と `Sync` を満たす責任は残ります。
