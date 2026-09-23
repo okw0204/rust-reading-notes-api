@@ -9,7 +9,7 @@ service は SQL を書かずに、保存の成功・未検出・競合をどう�
 1. `src/repository.rs` の `BookRepository` 全体。
 2. `src/service.rs` の `create_book` と `update_status`。
 3. `src/repository/sqlite.rs` の `impl BookRepository for SqliteBookRepository`、`insert_book`、`find_book`、`update_book_status`。
-4. `src/service/tests/fake.rs` の `impl BookRepository for FakeBookRepository` と `update_book_status`。
+4. `src/test_support.rs` の `impl BookRepository for FakeBookRepository` と `update_book_status`。
 5. `src/repository/sqlite.rs` と `src/service/tests.rs` にある、古い状態からの更新を拒否するテスト。
 
 ```mermaid
@@ -74,7 +74,7 @@ service は `WHERE` 句や `BookRow` を知りません。`find_book` の `NotFo
 ### フェイク Adapter は同じ契約を制御可能にする
 
 ```rust,ignore
-{{#include ../../../src/service/tests/fake.rs:fake_update}}
+{{#include ../../../src/test_support.rs:fake_update}}
 ```
 
 フェイクも `BookRepository` を実装し、`BTreeMap` の現在状態が `expected` と一致するときだけ更新します。状態不一致と取得後の削除を `Conflict` にし、注入した保存エラーを変更前に返します。常に成功するだけの代用品ではありません。

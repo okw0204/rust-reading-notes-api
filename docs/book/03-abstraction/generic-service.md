@@ -7,10 +7,10 @@
 ## 読む場所と順序
 
 1. `src/service.rs` の `ReadingService<R>`、`new`、`create_book`、`update_status`。
-2. `src/app.rs` の `AppState` と `build_app`。
-3. `src/handler.rs` の `State<AppState>` を受け取る handler。
+2. `src/app.rs` の `AppState<R>`、`build_app`、`build_app_with_repository`。
+3. `src/handler.rs` の `State<AppState<R>>` を受け取る handler。
 4. `src/service/tests.rs` の `reports_a_save_conflict_without_changing_the_book`。
-5. `src/service/tests/fake.rs` の `FakeBookRepository`。
+5. `src/test_support.rs` の `FakeBookRepository`。
 
 ```mermaid
 flowchart TB
@@ -47,23 +47,23 @@ flowchart TB
 
 struct の宣言自体には `R: BookRepository` がありません。`new` とユースケースを定義する `impl` に境界があるため、これらのメソッドを利用できるのは `BookRepository` の Interface を満たす `R` の場合です。境界は「repository らしい名前の型」という印ではなく、メソッド本体でどの操作と結果へ依存できるかを決めています。
 
-### 起動時の式から SQLite に具体化する
+### 組み立て時の式から Adapter を具体化する
 
 ```rust,ignore
 {{#include ../../../src/app.rs:composition}}
 ```
 
-`build_app` では、値と型が次の順でつながります。
+production の `build_app` では、値と型が次の順でつながります。
 
 1. `SqliteBookRepository::new(pool)` が `SqliteBookRepository` の値を返す。
-2. その値を `ReadingService::new(repository)` へ渡す式から、`R = SqliteBookRepository` と推論される。
-3. 結果の型は `ReadingService<SqliteBookRepository>` になる。
+2. その値を `build_app_with_repository(repository)` へ渡す式から、`R = SqliteBookRepository` と推論される。
+3. `ReadingService::new(repository)` の結果は `ReadingService<SqliteBookRepository>` になる。
 4. `Arc::new` が service を所有し、型は `Arc<ReadingService<SqliteBookRepository>>` になる。
-5. `AppState.service` の宣言と一致し、`State<AppState>` を受け取る handler から同じ値を利用する。
+5. `AppState<R>` と `State<AppState<R>>` の同じ `R` を通じて、handler も SQLite Adapter を持つ service を利用する。
 
-これは実行時の型切り替えではありません。アプリケーションの HTTP 経路で使う具体型は、コンパイル時に `SqliteBookRepository` と決まっています。handler から `state.service.create_book(...)` を呼ぶと、ジェネリックなメソッドの `R` も同じ型なので、内部の `self.repository.insert_book(...)` は SQLite Adapter の実装へ届きます。
+これは実行時の型切り替えではありません。Router を組み立てる呼び出しごとに具体型がコンパイル時に決まります。production では `SqliteBookRepository`、制御可能な検証では `FakeBookRepository` を渡します。どちらでも handler から `state.service.create_book(...)` を呼ぶと、`self.repository.insert_book(...)` はその Router に渡した Adapter の実装へ届きます。
 
-trait があるからといって、Router や handler まですべてジェネリックにする必要はありません。差し替えが必要な Seam は service と repository の間です。アプリケーションの組み立てでは具体型を明示し、その外側へ型引数を伝播させていません。
+`AppState<R>` と handler まで同じ型引数を伝えるのは、既存の `BookRepository` Seam の Adapter を Router の組み立て時に選べるようにするためです。新しい Interface や動的ディスパッチは増やしていません。
 
 ### service テストではフェイクに具体化する
 
@@ -84,12 +84,12 @@ trait があるからといって、Router や handler まですべてジェネ�
 フェイクの clone は、この検査に必要な所有権を分けるためにあります。
 
 ```rust,ignore
-{{#include ../../../src/service/tests/fake.rs:fake_state}}
+{{#include ../../../src/test_support.rs:fake_state}}
 ```
 
 service へフェイクを値として渡したあとも、テスト側には失敗注入と保存結果の確認に使うハンドルが必要です。`FakeBookRepository` の clone は内部の `Arc` を clone し、同じ `FakeState` の共有所有者を増やします。`BTreeMap` や本を丸ごと複製して別の保存状態を作るわけではありません。
 
-本番側の `AppState` も `Arc<ReadingService<SqliteBookRepository>>` を持つため、`AppState` の clone に service 自身の `Clone` は必要ありません。ここでも共有所有のハンドルを増やすだけで、service や DB 全体を複製しません。repository の Interfaceにも `ReadingService<R>` にも、理由のない `Clone` 境界は付いていません。
+`AppState<R>` も `Arc<ReadingService<R>>` を持つため、`AppState<R>` の clone に service や `R` 自身の `Clone` は必要ありません。手書きの `Clone` 実装は `Arc` の共有所有者だけを増やし、service や保存状態を複製しません。repository の Interface にも `ReadingService<R>` にも、理由のない `Clone` 境界は付いていません。
 
 ### 静的ディスパッチで呼び出し先が決まる
 
@@ -97,7 +97,8 @@ service へフェイクを値として渡したあとも、テスト側には失
 
 | 利用経路 | `R` | repository 呼び出しの到達先 | 観測する保証 |
 | --- | --- | --- | --- |
-| Router からの実行 | `SqliteBookRepository` | SQLx と SQLite | HTTP から実 DB までの保存結果 |
+| production の Router | `SqliteBookRepository` | SQLx と SQLite | HTTP から実 DB までの保存結果 |
+| 制御可能な Router テスト | `FakeBookRepository` | `BTreeMap` と注入エラー | HTTP から制御可能な保存先までの振る舞い |
 | service テスト | `FakeBookRepository` | `BTreeMap` と注入エラー | service の検証、遷移、エラー伝播 |
 
 この形では、`Box<dyn BookRepository>` のためのヒープ割り当てや vtable を介した動的ディスパッチは必要ありません。Adapter ごとに結果型を変える関連型も必要ありません。`BookRepository` が固定したドメイン型とエラーを両方の Adapter が返すため、service は Adapter 固有の分岐を持たずに済みます。
@@ -107,19 +108,19 @@ service へフェイクを値として渡したあとも、テスト側には失
 ## 確認
 
 1. `ReadingService<R>` は repository の型だけを記録しますか、それとも repository の値を所有しますか。
-2. 実際のアプリケーションで `R = SqliteBookRepository` と判断できる式と型宣言はどこですか。
+2. production の Router で `R = SqliteBookRepository` と判断できる式はどこですか。
 3. フェイクを使うテストは、service の判断も別実装へ差し替えていますか。
 4. `fake.clone()` は何を複製し、なぜ必要ですか。
-5. `ReadingService` に `Clone` がなくても `AppState` を clone できるのはなぜですか。
-6. repository trait があるのに `AppState` をジェネリックにしないのはなぜですか。
+5. `ReadingService` や `R` に `Clone` がなくても `AppState<R>` を clone できるのはなぜですか。
+6. repository trait があるうえで、`AppState` と handler もジェネリックにする理由は何ですか。
 
 ## 解答
 
 1. `repository: R` として値を所有します。メソッドの実行時は `&self` からその値を共有借用します。
-2. `SqliteBookRepository::new(pool)` を `ReadingService::new` へ渡す式から型が推論され、`AppState.service` の `Arc<ReadingService<SqliteBookRepository>>` がその具体型を明示しています。
+2. `SqliteBookRepository::new(pool)` の結果を `build_app_with_repository` へ渡す式から、`R = SqliteBookRepository` と推論されます。
 3. いいえ。repository の値と実装だけを変え、入力検証や状態遷移には同じ `ReadingService<R>` のメソッドを使います。
 4. 内部の `Arc` を clone して、同じ `FakeState` へのハンドルを増やします。service に所有権を渡したあとも、テストから失敗を設定し保存状態を観測するためです。
-5. `AppState` が clone するのは `Arc` だからです。service 本体を複製する必要はありません。
-6. 差し替える Seam は service と repository の間だけで、HTTP 経路の Adapter は SQLite に確定しているためです。型引数を Router 側まで広げても必要な差し替えは増えず、Interface だけが大きくなります。
+5. `AppState<R>` が clone するのは `Arc` だけだからです。service 本体や `R` を複製する必要はありません。
+6. 既存の `BookRepository` Seam の Adapter を Router の組み立て時に選び、HTTP からの処理を制御可能な保存先まで通すためです。型引数はその既存 Seam を組み立て場所まで届ける役割だけを持ちます。
 
 第 3 部では、`BookRepository` の契約を SQLite とフェイクが別々に実現し、`ReadingService<R>` の `R` が組み立て場所ごとに具体化されることを読みました。次は[非同期処理の借用と共有](../04-async/async-bounds.md)で、同じ呼び出しが返す Future に `Send`、`Sync`、`'static` がどう要求されるかを分けて読みます。

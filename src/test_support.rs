@@ -13,7 +13,7 @@ use crate::{
 
 // ANCHOR: fake_state
 #[derive(Clone, Default)]
-pub(super) struct FakeBookRepository {
+pub(crate) struct FakeBookRepository {
     state: Arc<Mutex<FakeState>>,
 }
 
@@ -28,11 +28,11 @@ struct FakeState {
 }
 
 impl FakeBookRepository {
-    pub(super) fn fail_next_update(&self, error: AppError) {
+    pub(crate) fn fail_next_update(&self, error: AppError) {
         self.state.lock().unwrap().next_update_error = Some(error);
     }
 
-    pub(super) fn calls(&self) -> usize {
+    pub(crate) fn calls(&self) -> usize {
         self.state.lock().unwrap().calls
     }
 }

@@ -1,7 +1,6 @@
 use super::*;
 
-mod fake;
-use fake::FakeBookRepository;
+use crate::test_support::FakeBookRepository;
 
 #[tokio::test]
 async fn fake_conditional_update_rejects_a_stale_state() {
