@@ -10,7 +10,7 @@
 2. `src/service.rs` の `ReadingService::create_book`。
 3. `src/repository.rs` の `BookRepository: Send + Sync` と `insert_book` の返り値。
 4. `src/repository/sqlite.rs` の `insert_book`。
-5. `src/app.rs` の `AppState` と `build_app`。
+5. `src/app.rs` の `AppState<R>` と `build_app_with_repository`。
 6. Axum 0.8.9 の `Handler` と `Router<S>`、Tokio 1.53.1 の `spawn` の公開 Interface。
 
 ```mermaid
@@ -46,7 +46,7 @@ sequenceDiagram
 
 したがって、`.await` は「新しいスレッドを作る命令」でも「必ず停止する命令」でもありません。呼び出し、Future の生成、poll による進行、`Pending` の場合の停止は別の出来事です。
 
-この handler の Future は、extractor から受け取った `AppState` と `CreateBookRequest` を所有します。`request.title` と `request.author` は `CreateBook` へ移動し、`state.service.create_book(...)` の呼び出しで service の Future を作ります。`.await` している間も、handler の Future は `AppState`、つまり service を共有所有する `Arc` を保持します。
+この handler の Future は、extractor から受け取った `AppState<R>` と `CreateBookRequest` を所有します。`request.title` と `request.author` は `CreateBook` へ移動し、`state.service.create_book(...)` の呼び出しで service の Future を作ります。`.await` している間も、handler の Future は `AppState<R>`、つまり service を共有所有する `Arc` を保持します。
 
 ### service の Future がローカル値を保持する
 
@@ -111,10 +111,10 @@ Tokio 1.53.1 の `spawn` は、渡す Future と出力へ `Send + 'static` を�
 
 | 制約 | 対象 | このアプリで必要になる理由 |
 | --- | --- | --- |
-| `BookRepository: Send` | repository の所有値 | repository を所有する service と `AppState` をスレッド間で移動可能にする |
+| `BookRepository: Send` | repository の所有値 | repository を所有する service と `AppState<R>` をスレッド間で移動可能にする |
 | `BookRepository: Sync` | repository への共有参照 | 待機中に保持する `&R` をスレッド間で移動可能にする |
 | 返される Future の `Send` | 各 repository 操作の途中状態 | handler まで入れ子になった Future をスレッド間で移動可能にする |
-| `AppState: 'static` | Router が所有する状態の型 | Router の外にある短命な参照へ状態を依存させない |
+| `AppState<R>: 'static` | Router が所有する状態の型 | Router の外にある短命な参照へ状態を依存させない |
 
 一般に `&T: Send` となるには `T: Sync` が必要です。repository の Future が `&self` を待機中に保持するため、`BookRepository: Sync` と Future の `Send` は関係します。ただし、repository が `Sync` なら Future が自動的に `Send` になるわけではありません。停止をまたいで保持するすべての値が検査対象です。
 
@@ -145,7 +145,7 @@ fn main() {
 | 要求元 | 公開 Interface の要点 | このアプリへの影響 |
 | --- | --- | --- |
 | [`axum::handler::Handler`](https://docs.rs/axum/0.8.9/axum/handler/trait.Handler.html) | handler の Future は `Future<Output = Response> + Send + 'static` | `create_book` から入れ子になる Future も `Send` を満たす必要がある |
-| [`axum::Router<S>`](https://docs.rs/axum/0.8.9/axum/struct.Router.html) | ルーティングを構築する `impl` は `S: Clone + Send + Sync + 'static` | `AppState` を clone・移動・共有でき、短命な外部参照に依存させない |
+| [`axum::Router<S>`](https://docs.rs/axum/0.8.9/axum/struct.Router.html) | ルーティングを構築する `impl` は `S: Clone + Send + Sync + 'static` | `AppState<R>` を clone・移動・共有でき、短命な外部参照に依存させない |
 | [`tokio::spawn`](https://docs.rs/tokio/1.53.1/tokio/task/fn.spawn.html) | task の Future と出力は `Send + 'static` | task を切り離す別案でだけ必要となり、現在の service 経路は要求しない |
 
 Axum の handler 関数に対する `Handler` 実装は、関数が返す Future に `Send`、状態 `S` に `Send + Sync + 'static` を要求します。Router 側では状態に `Clone` も要求します。プロジェクトの `BookRepository: Send + Sync` と各操作の Future に付いた `+ Send` は、これらの外側の条件までつながっています。
@@ -154,9 +154,9 @@ Axum の handler 関数に対する `Handler` 実装は、関数が返す Future
 
 `T: 'static` は「この値を永遠に実行する」「この値を破棄しない」という意味ではありません。`T` が非 `static` な参照に依存しない型であるという条件です。所有する `String` や `SqlitePool` のような値も満たせ、所有者が不要になれば通常どおり破棄されます。
 
-一方、`&'static T` は参照そのものがプログラム全体にわたって有効という別の表現です。`AppState: 'static` から、repository の各メソッドが受け取る `&BookTitle` まで `'static` でなければならないとは導けません。
+一方、`&'static T` は参照そのものがプログラム全体にわたって有効という別の表現です。`AppState<R>: 'static` から、repository の各メソッドが受け取る `&BookTitle` まで `'static` でなければならないとは導けません。
 
-handler の Future は `AppState` を所有し、その中の `Arc` が service を共有所有します。その所有範囲の内側で service を借り、さらに service の Future が所有する `title` と `author` を repository の Future が一時的に借ります。外側の型が短命な外部参照に依存しないことと、実行中に内側で期限付きの借用を使うことは両立します。
+handler の Future は `AppState<R>` を所有し、その中の `Arc` が service を共有所有します。その所有範囲の内側で service を借り、さらに service の Future が所有する `title` と `author` を repository の Future が一時的に借ります。外側の型が短命な外部参照に依存しないことと、実行中に内側で期限付きの借用を使うことは両立します。
 
 ### Arc は共有所有だけを担当する
 
@@ -164,9 +164,9 @@ handler の Future は `AppState` を所有し、その中の `Arc` が service 
 {{#include ../../../src/app.rs:composition}}
 ```
 
-`AppState` の clone で増えるのは `Arc` の共有所有者です。`ReadingService` や SQLite DB 全体を clone するわけではありません。`Arc<T>` は参照カウントを原子的に管理しますが、任意の `T` を自動でスレッド安全に変えません。通常、`Arc<T>` が `Send + Sync` を満たすにも、内側の `T` が `Send + Sync` を満たす必要があります。
+`AppState<R>` の clone で増えるのは `Arc` の共有所有者です。`ReadingService<R>` や Adapter の保存状態全体を clone するわけではありません。`Arc<T>` は参照カウントを原子的に管理しますが、任意の `T` を自動でスレッド安全に変えません。通常、`Arc<T>` が `Send + Sync` を満たすにも、内側の `T` が `Send + Sync` を満たす必要があります。
 
-このアプリでは `ReadingService<SqliteBookRepository>` が共有利用を想定した `SqlitePool` を所有します。次の[状態変更を HTTP から SQLite まで追う](../05-flow/status-update.md)では、ここまでに学んだ制約を使って一つの処理を端から端まで読み直します。その後、フェイクの `Arc<Mutex<FakeState>>` で、共有所有と排他的な変更が別の役割を持つことを確かめます。
+production では `R = SqliteBookRepository` であり、共有利用を想定した `SqlitePool` を所有します。制御可能な Router テストでは `R = FakeBookRepository` となり、その `Arc<Mutex<FakeState>>` から、共有所有と排他的な変更が別の役割を持つことを確かめます。次の[状態変更を HTTP から SQLite まで追う](../05-flow/status-update.md)では、production の経路を端から端まで読み直します。
 
 ## 確認
 

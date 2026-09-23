@@ -8,5 +8,7 @@ mod error;
 mod handler;
 mod repository;
 mod service;
+#[cfg(test)]
+mod test_support;
 
 pub use app::{build_app, connect_database};

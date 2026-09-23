@@ -11,6 +11,7 @@ use crate::{
     app::AppState,
     domain::{BookDetail, BookId, Note, NoteId, ReadingStatus, StoredBook},
     error::AppError,
+    repository::BookRepository,
     service::{AddNote, CreateBook, UpdateStatus},
 };
 
@@ -89,8 +90,8 @@ impl From<BookDetail> for BookDetailResponse {
 }
 
 // ANCHOR: create_book_handler
-pub(crate) async fn create_book(
-    State(state): State<AppState>,
+pub(crate) async fn create_book<R: BookRepository>(
+    State(state): State<AppState<R>>,
     Json(request): Json<CreateBookRequest>,
 ) -> Result<(StatusCode, Json<BookResponse>), AppError> {
     // handler は HTTP の値をユースケースの入力へ変え、検証規則は service に委ねる。
@@ -107,24 +108,24 @@ pub(crate) async fn create_book(
 
 // ANCHOR_END: create_book_handler
 
-pub(crate) async fn list_books(
-    State(state): State<AppState>,
+pub(crate) async fn list_books<R: BookRepository>(
+    State(state): State<AppState<R>>,
     Query(query): Query<ListBooksQuery>,
 ) -> Result<Json<Vec<BookResponse>>, AppError> {
     let books = state.service.list_books(query.status).await?;
     Ok(Json(books.into_iter().map(BookResponse::from).collect()))
 }
 
-pub(crate) async fn get_book(
-    State(state): State<AppState>,
+pub(crate) async fn get_book<R: BookRepository>(
+    State(state): State<AppState<R>>,
     Path(id): Path<BookId>,
 ) -> Result<Json<BookDetailResponse>, AppError> {
     let detail = state.service.get_book(id).await?;
     Ok(Json(detail.into()))
 }
 
-pub(crate) async fn add_note(
-    State(state): State<AppState>,
+pub(crate) async fn add_note<R: BookRepository>(
+    State(state): State<AppState<R>>,
     Path(book_id): Path<BookId>,
     Json(request): Json<AddNoteRequest>,
 ) -> Result<(StatusCode, Json<NoteResponse>), AppError> {
@@ -136,8 +137,8 @@ pub(crate) async fn add_note(
 }
 
 // ANCHOR: update_status_handler
-pub(crate) async fn update_status(
-    State(state): State<AppState>,
+pub(crate) async fn update_status<R: BookRepository>(
+    State(state): State<AppState<R>>,
     Path(book_id): Path<BookId>,
     Json(request): Json<UpdateStatusRequest>,
 ) -> Result<Json<BookResponse>, AppError> {
@@ -154,8 +155,8 @@ pub(crate) async fn update_status(
 }
 // ANCHOR_END: update_status_handler
 
-pub(crate) async fn delete_book(
-    State(state): State<AppState>,
+pub(crate) async fn delete_book<R: BookRepository>(
+    State(state): State<AppState<R>>,
     Path(book_id): Path<BookId>,
 ) -> Result<StatusCode, AppError> {
     state.service.delete_book(book_id).await?;

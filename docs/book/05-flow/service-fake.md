@@ -6,13 +6,13 @@
 
 ## 読む場所と順序
 
-1. `src/service/tests/fake.rs` の `FakeBookRepository`、`FakeState`、`fail_next_update`。
+1. `src/test_support.rs` の `FakeBookRepository`、`FakeState`、`fail_next_update`。
 2. 同ファイルの `update_book_status`。
 3. `src/service/tests.rs` の `reports_a_save_conflict_without_changing_the_book` と `preserves_a_database_save_error_and_the_stored_state`。
 4. 同ファイルの `rejects_invalid_inputs_without_repository_access` と `rejects_invalid_transitions_without_saving`。
 
 ```rust,ignore
-{{#include ../../../src/service/tests/fake.rs:fake_state}}
+{{#include ../../../src/test_support.rs:fake_state}}
 ```
 
 ## 解説
@@ -22,7 +22,7 @@
 フェイクは DB に接続せず、`BTreeMap` に本とメモを保存します。`Arc` によってテストと service が同じ `FakeState` を共有し、`Mutex` によってその変更を一度に一つの操作へ制限します。`fake.clone()` で別々の DB 相当の状態を複製するのではありません。
 
 ```rust,ignore
-{{#include ../../../src/service/tests/fake.rs:fake_update}}
+{{#include ../../../src/test_support.rs:fake_update}}
 ```
 
 `lock()` から得たガードを保持する間に、呼び出し回数、注入エラー、保存条件を順に調べます。`take()` は `Option` の中身を取り出して `None` にするため、設定したエラーは次の更新で一度だけ返ります。エラーを返す枝は `books.insert` より前なので保存値を変更しません。
