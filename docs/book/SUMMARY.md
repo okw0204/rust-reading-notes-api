@@ -25,6 +25,7 @@
 
 # 第 5 部：全体を読み直す
 
-- [フェイクで service の判断を確かめる](04-tests/service-fake.md)
-- [SQLite で保存の契約を確かめる](04-tests/sqlite-contract.md)
-- [Router から HTTP の保証を確かめる](04-tests/http-integration.md)
+- [状態変更を HTTP から SQLite まで追う](05-flow/status-update.md)
+- [フェイクで service の判断を確かめる](05-flow/service-fake.md)
+- [SQLite で保存の契約を確かめる](05-flow/sqlite-contract.md)
+- [Router から HTTP の保証を確かめる](05-flow/http-integration.md)

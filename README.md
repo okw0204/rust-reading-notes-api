@@ -43,7 +43,7 @@ Markdown 原文ではソースの `include` や Mermaid の図が生成 HTML と
 | 第 2 部：型と状態 | [検証済みの値型](docs/book/02-types/validated-values.md)、`Book<S>` の型状態、DB の実行時状態との境界 |
 | 第 3 部：型を抽象化する | [repository trait](docs/book/03-abstraction/repository-trait.md)、ジェネリックな service、具体的な Adapter |
 | 第 4 部：非同期と共有 | [Future の借用](docs/book/03-abstraction/async-bounds.md)、`Send`・`Sync`・`'static`・`Arc` |
-| 第 5 部：全体を読み直す | [service のフェイク](docs/book/04-tests/service-fake.md)、SQLite の条件付き更新、Router の HTTP 統合テスト |
+| 第 5 部：全体を読み直す | [状態変更の端から端の流れ](docs/book/05-flow/status-update.md)、service のフェイク、SQLite の条件付き更新、Router の HTTP 統合テスト |
 
 各章は「問い → 読む場所と順序 → 解説 → 確認 → 解答」の順です。完成した実装と検証済みの例を根拠に読み進められます。
 
@@ -161,4 +161,4 @@ git diff --check
 
 `cargo test` は型状態の doctest（合法な操作と `compile_fail`）、service のフェイク、SQLite の保存契約、Router の統合テストを実行します。API テストは独立したインメモリ SQLite（`sqlite::memory:`）を1接続で使い、repository の `#[sqlx::test]` は SQLx が独立したファイル DB と pool を用意します。後者は `connect_database` の1接続設定を引き継ぎません。どちらもアプリと同じ migration を適用し、手元の `reading-notes.db` を共有しません。フェイクでは保存失敗を注入し、repository テストでは実 SQL、API テストでは HTTP と保存結果を観測します。
 
-`mdbook build` の生成先は `book/` で、Git 管理対象外です。検証の読み方は[第 5 部](docs/book/04-tests/service-fake.md)で確認できます。
+`mdbook build` の生成先は `book/` で、Git 管理対象外です。検証の読み方は[第 5 部](docs/book/05-flow/status-update.md)で確認できます。
