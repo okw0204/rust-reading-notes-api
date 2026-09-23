@@ -122,4 +122,4 @@ service へフェイクを値として渡したあとも、テスト側には失
 5. `AppState` が clone するのは `Arc` だからです。service 本体を複製する必要はありません。
 6. 差し替える Seam は service と repository の間だけで、HTTP 経路の Adapter は SQLite に確定しているためです。型引数を Router 側まで広げても必要な差し替えは増えず、Interface だけが大きくなります。
 
-第 3 部では、`BookRepository` の契約を SQLite とフェイクが別々に実現し、`ReadingService<R>` の `R` が組み立て場所ごとに具体化されることを読みました。次は[非同期処理の借用と共有](async-bounds.md)で、同じ呼び出しが返す Future に `Send`、`Sync`、`'static` がどう要求されるかを分けて読みます。
+第 3 部では、`BookRepository` の契約を SQLite とフェイクが別々に実現し、`ReadingService<R>` の `R` が組み立て場所ごとに具体化されることを読みました。次は[非同期処理の借用と共有](../04-async/async-bounds.md)で、同じ呼び出しが返す Future に `Send`、`Sync`、`'static` がどう要求されるかを分けて読みます。

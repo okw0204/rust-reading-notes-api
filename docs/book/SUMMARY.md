@@ -21,7 +21,7 @@
 
 # 第 4 部：非同期と共有
 
-- [非同期処理の借用と共有を読む](03-abstraction/async-bounds.md)
+- [非同期処理の借用と共有を読む](04-async/async-bounds.md)
 
 # 第 5 部：全体を読み直す
 
