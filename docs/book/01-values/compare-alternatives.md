@@ -97,6 +97,8 @@ fn normalize(value: &str) -> Result<String, InvalidText> {
 }
 ```
 
+`InvalidText` は値を作る経路が `src/domain/text.rs` の内部に限られるため、この別案は引数の型の違いを比べるコードです。
+
 ただし、`BookTitle` が検証後の文字列を所有する以上、成功時の割り当ては必要です。現在の `TryFrom<String>` は HTTP 入力の `String` を以後使わないことを型シグネチャで示し、変換へ所有権を渡します。借用版は、呼び出し側が元の文字列を引き続き必要とする Interface なら適します。本編ではその必要がありません。
 
 ### 意図的にコンパイルできない例

@@ -75,3 +75,5 @@ error[E0599]: no method named `finish` found for struct `Book<WantToRead>` in th
 2. 元の値は移動済みで使えません。ただし clone した別の値は残ります。全スナップショットの一意性や DB の排他は保証しません。
 3. いいえ。遷移メソッドはメモリ上の値を返すだけで、保存処理は別です。
 4. `src/domain/book.rs` の `Book` の rustdoc を `cargo test --doc` で実行し、正例の成功と失敗例のコンパイル拒否を確認します。診断コードまでは照合されないため、同じ最小例を `cargo check` し、`Book<WantToRead>` に `finish` がない `E0599` であることを別に確認します。
+
+次は[実行時の状態を型へ接続する](runtime-boundaries.md)で、DB を読むまで分からない状態を型状態へつなぐ境界と、型では防げない保存の競合を読みます。
