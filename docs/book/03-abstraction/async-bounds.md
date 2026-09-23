@@ -166,7 +166,7 @@ handler の Future は `AppState` を所有し、その中の `Arc` が service 
 
 `AppState` の clone で増えるのは `Arc` の共有所有者です。`ReadingService` や SQLite DB 全体を clone するわけではありません。`Arc<T>` は参照カウントを原子的に管理しますが、任意の `T` を自動でスレッド安全に変えません。通常、`Arc<T>` が `Send + Sync` を満たすにも、内側の `T` が `Send + Sync` を満たす必要があります。
 
-このアプリでは `ReadingService<SqliteBookRepository>` が共有利用を想定した `SqlitePool` を所有します。次の[フェイクで service の判断を確かめる](../04-tests/service-fake.md)では、フェイクが `Arc<Mutex<FakeState>>` を使います。`Arc` は所有者を共有し、`Mutex` は共有中の変更を排他的にするため、役割は別です。
+このアプリでは `ReadingService<SqliteBookRepository>` が共有利用を想定した `SqlitePool` を所有します。次の[状態変更を HTTP から SQLite まで追う](../05-flow/status-update.md)では、ここまでに学んだ制約を使って一つの処理を端から端まで読み直します。その後、フェイクの `Arc<Mutex<FakeState>>` で、共有所有と排他的な変更が別の役割を持つことを確かめます。
 
 ## 確認
 
