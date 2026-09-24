@@ -1,8 +1,9 @@
-//! DB に接続せず、保存結果と一度だけの保存失敗を制御するテスト用実装です。
+//! DB に接続せず、保存結果、失敗、並行処理の進行を制御するテスト用実装です。
 
 use std::{collections::BTreeMap, sync::Arc};
 
 use parking_lot::Mutex;
+use tokio::sync::{Notify, Semaphore};
 
 use crate::{
     domain::{
@@ -19,6 +20,23 @@ pub(crate) struct FakeBookRepository {
     state: Arc<Mutex<FakeState>>,
 }
 
+#[derive(Clone)]
+pub(crate) struct ReadingCompletionControl {
+    inner: Arc<ReadingCompletionControlInner>,
+}
+
+struct ReadingCompletionControlInner {
+    gates: BTreeMap<i64, Arc<Semaphore>>,
+    progress: Mutex<ReadingCompletionProgress>,
+    changed: Notify,
+}
+
+#[derive(Default)]
+struct ReadingCompletionProgress {
+    started: Vec<BookId>,
+    finished: Vec<BookId>,
+}
+
 #[derive(Default)]
 struct FakeState {
     books: BTreeMap<i64, StoredBook>,
@@ -27,6 +45,7 @@ struct FakeState {
     next_note_id: i64,
     next_update_error: Option<AppError>,
     calls: usize,
+    reading_completion_control: Option<ReadingCompletionControl>,
 }
 
 impl FakeBookRepository {
@@ -36,6 +55,76 @@ impl FakeBookRepository {
 
     pub(crate) fn calls(&self) -> usize {
         self.state.lock().calls
+    }
+
+    pub(crate) fn control_reading_completions(
+        &self,
+        book_ids: impl IntoIterator<Item = BookId>,
+    ) -> ReadingCompletionControl {
+        let control = ReadingCompletionControl {
+            inner: Arc::new(ReadingCompletionControlInner {
+                gates: book_ids
+                    .into_iter()
+                    .map(|book_id| (book_id.0, Arc::new(Semaphore::new(0))))
+                    .collect(),
+                progress: Mutex::new(ReadingCompletionProgress::default()),
+                changed: Notify::new(),
+            }),
+        };
+        self.state.lock().reading_completion_control = Some(control.clone());
+        control
+    }
+}
+impl ReadingCompletionControl {
+    async fn wait_for_release(&self, book_id: BookId) {
+        if let Some(gate) = self.inner.gates.get(&book_id.0) {
+            gate.acquire()
+                .await
+                .expect("reading completion gate remains open")
+                .forget();
+        }
+    }
+
+    fn mark_started(&self, book_id: BookId) {
+        self.inner.progress.lock().started.push(book_id);
+        self.inner.changed.notify_waiters();
+    }
+
+    fn mark_finished(&self, book_id: BookId) {
+        self.inner.progress.lock().finished.push(book_id);
+        self.inner.changed.notify_waiters();
+    }
+
+    pub(crate) async fn wait_for_started(&self, count: usize) {
+        loop {
+            let changed = self.inner.changed.notified();
+            if self.inner.progress.lock().started.len() >= count {
+                return;
+            }
+            changed.await;
+        }
+    }
+
+    pub(crate) async fn wait_for_finished(&self, count: usize) {
+        loop {
+            let changed = self.inner.changed.notified();
+            if self.inner.progress.lock().finished.len() >= count {
+                return;
+            }
+            changed.await;
+        }
+    }
+
+    pub(crate) fn release(&self, book_id: BookId) {
+        self.inner
+            .gates
+            .get(&book_id.0)
+            .expect("controlled reading completion has a gate")
+            .add_permits(1);
+    }
+
+    pub(crate) fn finished(&self) -> Vec<BookId> {
+        self.inner.progress.lock().finished.clone()
     }
 }
 
@@ -124,6 +213,13 @@ impl BookRepository for FakeBookRepository {
         book: Book<Finished>,
         body: &NoteBody,
     ) -> Result<(StoredBook, Note), AppError> {
+        let book_id = book.id();
+        let control = self.state.lock().reading_completion_control.clone();
+        if let Some(control) = &control {
+            control.mark_started(book_id);
+            control.wait_for_release(book_id).await;
+        }
+
         let mut state = self.state.lock();
         state.calls += 1;
         if let Some(error) = state.next_update_error.take() {
@@ -143,6 +239,11 @@ impl BookRepository for FakeBookRepository {
         };
         state.books.insert(id, finished.clone());
         state.notes.entry(id).or_default().push(note.clone());
+        drop(state);
+
+        if let Some(control) = control {
+            control.mark_finished(book_id);
+        }
         Ok((finished, note))
     }
 

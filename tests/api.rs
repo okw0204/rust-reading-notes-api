@@ -805,6 +805,37 @@ async fn rejects_the_entire_completion_request_before_saving_any_item() {
 }
 
 #[tokio::test]
+async fn rejects_completion_requests_above_the_concurrency_limit() {
+    let app = test_app().await;
+    let response = app
+        .oneshot(json_request(
+            "POST",
+            "/reading-completions",
+            json!({
+                "items": (1..=9)
+                    .map(|book_id| json!({
+                        "book_id": book_id,
+                        "body": format!("note {book_id}")
+                    }))
+                    .collect::<Vec<_>>()
+            }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        json_body(response).await,
+        json!({
+            "error": {
+                "code": "validation_error",
+                "message": "items must contain between 1 and 8 entries"
+            }
+        })
+    );
+}
+
+#[tokio::test]
 async fn returns_item_failures_without_rolling_back_independent_successes() {
     let app = test_app().await;
     for (title, status) in [
