@@ -109,4 +109,4 @@ stateDiagram-v2
 5. 一冊ごとの待機点を持つフェイクで、開始、失敗、成功、親 Future の破棄をテスト側から順番に起こします。実時間の短さや偶然の完了順は使いません。
 6. task の所有者、終了後の処理状態を取得する Interface、shutdown、再試行、HTTP 応答との関係も必要になるためです。
 
-次は[第 5 部](../05-flow/status-update.md)で、HTTP、service、repository、SQLite の境界を端から端へ読み直します。
+次は[HTTP から SQLite まで](../05-flow/http-to-sqlite.md)で、利用者の要求から保存結果までを端から端へ読み直します。

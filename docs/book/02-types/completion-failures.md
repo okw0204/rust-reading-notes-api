@@ -7,8 +7,8 @@
 ## 前提
 
 - [要求から検証済みの入力へ](../01-values/reading-completion-input.md)で扱う、保存前の要求全体の検証。
-- [型状態で遷移を制限する](typestate.md)で扱う `Book<Reading>` から `Book<Finished>` への遷移。
-- [実行時の状態を型へ接続する](runtime-boundaries.md)で扱う、取得時と保存時の状態検査。
+- [保存状態を型状態へ接続する](stored-state-to-typestate.md)で扱う `Book<Reading>` から `Book<Finished>` への遷移。
+- [状態変更とメモを一緒に保存する](atomic-completion.md)で扱う、保存時の状態検査と transaction。
 
 ## 読む場所と順序
 
@@ -109,4 +109,4 @@ transaction の範囲は小さく見えますが、後半の失敗で読了状�
 4. 利用者は再試行や状態確認に必要な分類だけを知ればよく、DB の構造や保存値を公開する必要はありません。一方、運用側は原因を調べる必要があるため、内部ログには元の失敗を残します。
 5. 状態更新の後のメモ追加が必ず失敗する経路を、待ち時間や実行順に依存せず作ります。その経路で rollback されることは示しますが、すべての DB 障害や commit 失敗を網羅しません。
 
-次は[永続化の契約を trait で読む](../03-abstraction/repository-trait.md)で、一冊の原子的な保存を SQLite とフェイクが同じ Interface の背後でどう表すかを読みます。
+次は[`BookRepository` の契約](../03-abstraction/repository-trait.md)で、一冊の原子的な保存を SQLite とフェイクが同じ Interface の背後でどう表すかを読みます。

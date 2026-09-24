@@ -98,12 +98,10 @@ mod tests {
         assert_eq!(title.as_str(), "Rust Book");
         assert_eq!(title.into_inner(), "Rust Book");
         for blank in ["", " \t", "\n\u{3000}"] {
-            assert_eq!(
-                BookTitle::try_from(blank.to_owned())
-                    .unwrap_err()
-                    .to_string(),
-                "title must not be empty"
-            );
+            assert!(matches!(
+                BookTitle::try_from(blank.to_owned()),
+                Err(InvalidText(_))
+            ));
         }
     }
 
@@ -113,10 +111,10 @@ mod tests {
         assert_eq!(author.as_str(), "Mara Bos");
         assert_eq!(author.into_inner(), "Mara Bos");
         for blank in ["", " \t", "\n\u{3000}"] {
-            assert_eq!(
-                Author::try_from(blank.to_owned()).unwrap_err().to_string(),
-                "author must not be empty"
-            );
+            assert!(matches!(
+                Author::try_from(blank.to_owned()),
+                Err(InvalidText(_))
+            ));
         }
     }
 
@@ -126,12 +124,10 @@ mod tests {
         assert_eq!(body.as_str(), "所有権\n借用");
         assert_eq!(body.into_inner(), "所有権\n借用");
         for blank in ["", " \t", "\n\u{3000}"] {
-            assert_eq!(
-                NoteBody::try_from(blank.to_owned())
-                    .unwrap_err()
-                    .to_string(),
-                "note body must not be empty"
-            );
+            assert!(matches!(
+                NoteBody::try_from(blank.to_owned()),
+                Err(InvalidText(_))
+            ));
         }
     }
 }

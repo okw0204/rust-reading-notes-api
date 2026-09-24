@@ -108,9 +108,8 @@ async fn reports_a_save_conflict_without_changing_the_book() {
 // ANCHOR_END: service_conflict_test
 
 #[tokio::test]
-async fn rejects_invalid_inputs_without_repository_access() {
-    let fake = FakeBookRepository::default();
-    let service = ReadingService::new(fake.clone());
+async fn rejects_invalid_inputs_without_changing_saved_state() {
+    let service = ReadingService::new(FakeBookRepository::default());
     for (title, author) in [(" ", "Author"), ("Title", "\t")] {
         assert!(matches!(
             service
@@ -121,11 +120,20 @@ async fn rejects_invalid_inputs_without_repository_access() {
                 .await,
             Err(AppError::Validation(_))
         ));
+        assert!(service.list_books(None).await.unwrap().is_empty());
     }
+
+    let book = service
+        .create_book(CreateBook {
+            title: "Book".to_owned(),
+            author: "Author".to_owned(),
+        })
+        .await
+        .unwrap();
     assert!(matches!(
         service
             .add_note(
-                BookId(1),
+                book.id(),
                 AddNote {
                     body: "\n".to_owned(),
                 }
@@ -133,6 +141,8 @@ async fn rejects_invalid_inputs_without_repository_access() {
             .await,
         Err(AppError::Validation(_))
     ));
+    assert!(service.get_book(book.id()).await.unwrap().notes.is_empty());
+
     assert!(matches!(
         service.list_books(Some("paused".to_owned())).await,
         Err(AppError::Validation(_))
@@ -140,7 +150,7 @@ async fn rejects_invalid_inputs_without_repository_access() {
     assert!(matches!(
         service
             .update_status(
-                BookId(1),
+                book.id(),
                 UpdateStatus {
                     status: "paused".to_owned(),
                 }
@@ -148,7 +158,10 @@ async fn rejects_invalid_inputs_without_repository_access() {
             .await,
         Err(AppError::Validation(_))
     ));
-    assert_eq!(fake.calls(), 0);
+    assert_eq!(
+        service.get_book(book.id()).await.unwrap().book.status(),
+        ReadingStatus::WantToRead
+    );
 }
 
 #[tokio::test]
@@ -181,9 +194,8 @@ async fn preserves_a_database_save_error_and_the_stored_state() {
 }
 
 #[tokio::test]
-async fn rejects_invalid_transitions_without_saving() {
-    let fake = FakeBookRepository::default();
-    let service = ReadingService::new(fake.clone());
+async fn rejects_invalid_transitions_without_changing_saved_state() {
+    let service = ReadingService::new(FakeBookRepository::default());
     let book = service
         .create_book(CreateBook {
             title: "Book".to_owned(),
@@ -191,12 +203,21 @@ async fn rejects_invalid_transitions_without_saving() {
         })
         .await
         .unwrap();
-    for (advance, rejected) in [
-        (None, vec!["want_to_read", "finished"]),
-        (Some("reading"), vec!["want_to_read", "reading"]),
+    for (advance, rejected, expected) in [
+        (
+            None,
+            vec!["want_to_read", "finished"],
+            ReadingStatus::WantToRead,
+        ),
+        (
+            Some("reading"),
+            vec!["want_to_read", "reading"],
+            ReadingStatus::Reading,
+        ),
         (
             Some("finished"),
             vec!["want_to_read", "reading", "finished"],
+            ReadingStatus::Finished,
         ),
     ] {
         if let Some(status) = advance {
@@ -211,7 +232,6 @@ async fn rejects_invalid_transitions_without_saving() {
                 .unwrap();
         }
         for status in rejected {
-            let before = fake.calls();
             assert!(matches!(
                 service
                     .update_status(
@@ -223,7 +243,10 @@ async fn rejects_invalid_transitions_without_saving() {
                     .await,
                 Err(AppError::Conflict)
             ));
-            assert_eq!(fake.calls() - before, 1);
+            assert_eq!(
+                service.get_book(book.id()).await.unwrap().book.status(),
+                expected
+            );
         }
     }
 }

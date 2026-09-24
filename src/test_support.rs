@@ -51,7 +51,6 @@ struct FakeState {
     next_book_id: i64,
     next_note_id: i64,
     next_update_error: Option<AppError>,
-    calls: usize,
     reading_completion_control: Option<ReadingCompletionControl>,
     reading_completion_errors: BTreeMap<i64, AppError>,
 }
@@ -66,10 +65,6 @@ impl FakeBookRepository {
             .lock()
             .reading_completion_errors
             .insert(book_id.0, error);
-    }
-
-    pub(crate) fn calls(&self) -> usize {
-        self.state.lock().calls
     }
 
     pub(crate) fn control_reading_completions(
@@ -186,7 +181,6 @@ impl BookRepository for FakeBookRepository {
         author: &Author,
     ) -> Result<StoredBook, AppError> {
         let mut state = self.state.lock();
-        state.calls += 1;
         state.next_book_id += 1;
         let book = StoredBook::WantToRead(Book::new(
             BookId(state.next_book_id),
@@ -198,8 +192,7 @@ impl BookRepository for FakeBookRepository {
     }
 
     async fn list_books(&self, status: Option<ReadingStatus>) -> Result<Vec<StoredBook>, AppError> {
-        let mut state = self.state.lock();
-        state.calls += 1;
+        let state = self.state.lock();
         Ok(state
             .books
             .values()
@@ -209,20 +202,17 @@ impl BookRepository for FakeBookRepository {
     }
 
     async fn find_book(&self, id: BookId) -> Result<StoredBook, AppError> {
-        let mut state = self.state.lock();
-        state.calls += 1;
+        let state = self.state.lock();
         state.books.get(&id.0).cloned().ok_or(AppError::NotFound)
     }
 
     async fn list_notes(&self, book_id: BookId) -> Result<Vec<Note>, AppError> {
-        let mut state = self.state.lock();
-        state.calls += 1;
+        let state = self.state.lock();
         Ok(state.notes.get(&book_id.0).cloned().unwrap_or_default())
     }
 
     async fn insert_note(&self, book_id: BookId, body: &NoteBody) -> Result<Note, AppError> {
         let mut state = self.state.lock();
-        state.calls += 1;
         if !state.books.contains_key(&book_id.0) {
             return Err(AppError::NotFound);
         }
@@ -242,7 +232,6 @@ impl BookRepository for FakeBookRepository {
         next: StoredBook,
     ) -> Result<StoredBook, AppError> {
         let mut state = self.state.lock();
-        state.calls += 1;
         if let Some(error) = state.next_update_error.take() {
             return Err(error);
         }
@@ -269,7 +258,6 @@ impl BookRepository for FakeBookRepository {
         }
 
         let mut state = self.state.lock();
-        state.calls += 1;
         let error = state
             .reading_completion_errors
             .remove(&book_id.0)
@@ -302,7 +290,6 @@ impl BookRepository for FakeBookRepository {
 
     async fn delete_book(&self, id: BookId) -> Result<(), AppError> {
         let mut state = self.state.lock();
-        state.calls += 1;
         state.books.remove(&id.0).ok_or(AppError::NotFound)?;
         state.notes.remove(&id.0);
         Ok(())
