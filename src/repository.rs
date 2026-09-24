@@ -3,7 +3,9 @@
 use std::future::Future;
 
 use crate::{
-    domain::{Author, BookId, BookTitle, Note, NoteBody, ReadingStatus, StoredBook},
+    domain::{
+        Author, Book, BookId, BookTitle, Finished, Note, NoteBody, ReadingStatus, StoredBook,
+    },
     error::AppError,
 };
 
@@ -49,6 +51,13 @@ pub(crate) trait BookRepository: Send + Sync {
         expected: ReadingStatus,
         next: StoredBook,
     ) -> impl Future<Output = Result<StoredBook, AppError>> + Send;
+
+    /// 読書中の本を読了へ進め、メモとともに一つの保存単位で確定します。
+    fn record_reading_completion(
+        &self,
+        book: Book<Finished>,
+        body: &NoteBody,
+    ) -> impl Future<Output = Result<(StoredBook, Note), AppError>> + Send;
 
     /// 本と対応するメモを削除します。本がなければ NotFound を返します。
     fn delete_book(&self, id: BookId) -> impl Future<Output = Result<(), AppError>> + Send;

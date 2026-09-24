@@ -6,6 +6,7 @@
 
 - [値を受け取る関数を読む](01-values/values-and-functions.md)
 - [本の登録で所有権を追う](01-values/create-book.md)
+- [要求から検証済みの入力へ](01-values/reading-completion-input.md)
 - [成立する実装と別案を比べる](01-values/compare-alternatives.md)
 
 # 第 2 部：型と状態

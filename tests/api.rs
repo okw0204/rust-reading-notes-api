@@ -633,3 +633,173 @@ async fn returns_not_found_when_deleting_an_unknown_book() {
         })
     );
 }
+
+#[tokio::test]
+async fn records_reading_completions_and_returns_the_persisted_results() {
+    let app = test_app().await;
+    for (title, author) in [
+        ("Programming Rust", "Jim Blandy"),
+        ("Rust for Rustaceans", "Jon Gjengset"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/books",
+                json!({"title": title, "author": author}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+    }
+    for id in [1, 2] {
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "PATCH",
+                &format!("/books/{id}/status"),
+                json!({"status": "reading"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    let response = app
+        .clone()
+        .oneshot(json_request(
+            "POST",
+            "/reading-completions",
+            json!({
+                "items": [
+                    {"book_id": 2, "body": "Future が保持する値を確認した"},
+                    {"book_id": 1, "body": "所有権の章を実装と結び付けて読めた"}
+                ]
+            }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        json_body(response).await,
+        json!({
+            "results": [
+                {
+                    "book_id": 2,
+                    "outcome": "completed",
+                    "book": {
+                        "id": 2,
+                        "title": "Rust for Rustaceans",
+                        "author": "Jon Gjengset",
+                        "status": "finished"
+                    },
+                    "note": {"id": 1, "body": "Future が保持する値を確認した"}
+                },
+                {
+                    "book_id": 1,
+                    "outcome": "completed",
+                    "book": {
+                        "id": 1,
+                        "title": "Programming Rust",
+                        "author": "Jim Blandy",
+                        "status": "finished"
+                    },
+                    "note": {"id": 2, "body": "所有権の章を実装と結び付けて読めた"}
+                }
+            ]
+        })
+    );
+
+    for (book_id, note_id, expected_note) in [
+        (1, 2, "所有権の章を実装と結び付けて読めた"),
+        (2, 1, "Future が保持する値を確認した"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/books/{book_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let detail = json_body(response).await;
+        assert_eq!(detail["status"], "finished");
+        assert_eq!(
+            detail["notes"],
+            json!([{"id": note_id, "body": expected_note}])
+        );
+    }
+}
+
+#[tokio::test]
+async fn rejects_the_entire_completion_request_before_saving_any_item() {
+    let app = test_app().await;
+    for id in 1..=2 {
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/books",
+                json!({"title": format!("Rust {id}"), "author": "Author"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "PATCH",
+                &format!("/books/{id}/status"),
+                json!({"status": "reading"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    let response = app
+        .clone()
+        .oneshot(json_request(
+            "POST",
+            "/reading-completions",
+            json!({
+                "items": [
+                    {"book_id": 1, "body": "保存されてはいけないメモ"},
+                    {"book_id": 2, "body": "  "}
+                ]
+            }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        json_body(response).await,
+        json!({
+            "error": {
+                "code": "validation_error",
+                "message": "note body must not be empty"
+            }
+        })
+    );
+
+    for id in 1..=2 {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/books/{id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let detail = json_body(response).await;
+        assert_eq!(detail["status"], "reading");
+        assert_eq!(detail["notes"], json!([]));
+    }
+}

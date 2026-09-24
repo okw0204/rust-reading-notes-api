@@ -39,7 +39,7 @@ Markdown 原文ではソースの `include` や Mermaid の図が生成 HTML と
 
 | 部 | 内容と入口 |
 | --- | --- |
-| 第 1 部：値と関数 | [値を受け取る関数](docs/book/01-values/values-and-functions.md)、本の登録における所有権の移動、部分的な移動、借用、`Clone`、`Result` と `?` |
+| 第 1 部：値と関数 | [値を受け取る関数](docs/book/01-values/values-and-functions.md)、[一括読了記録の入力](docs/book/01-values/reading-completion-input.md)、所有権の移動、部分的な移動、借用、`Clone`、`Result` と `?` |
 | 第 2 部：型と状態 | [検証済みの値型](docs/book/02-types/validated-values.md)、`Book<S>` の型状態、DB の実行時状態との境界 |
 | 第 3 部：型を抽象化する | [repository trait](docs/book/03-abstraction/repository-trait.md)、ジェネリックな service、具体的な Adapter |
 | 第 4 部：非同期と共有 | [Future の借用](docs/book/04-async/async-bounds.md)、`Send`・`Sync`・`'static`・`Arc` |
@@ -75,13 +75,9 @@ curl -i -X PATCH http://127.0.0.1:3000/books/1/status \
   -H 'content-type: application/json' \
   -d '{"status":"reading"}'
 
-curl -i -X POST http://127.0.0.1:3000/books/1/notes \
+curl -i -X POST http://127.0.0.1:3000/reading-completions \
   -H 'content-type: application/json' \
-  -d '{"body":"所有権の説明を再読する"}'
-
-curl -i -X PATCH http://127.0.0.1:3000/books/1/status \
-  -H 'content-type: application/json' \
-  -d '{"status":"finished"}'
+  -d '{"items":[{"book_id":1,"body":"所有権と Future の関係を確認した"}]}'
 
 curl http://127.0.0.1:3000/books/1
 curl -i -X DELETE http://127.0.0.1:3000/books/1
@@ -97,6 +93,7 @@ curl -i -X DELETE http://127.0.0.1:3000/books/1
 | `GET` | `/books/{id}` | `200` | 本とメモを取得する |
 | `PATCH` | `/books/{id}/status` | `200` | 読書状態を変更する |
 | `POST` | `/books/{id}/notes` | `201` | メモを追加する |
+| `POST` | `/reading-completions` | `200` | 1〜8 冊を読了時のメモとともに記録する |
 | `DELETE` | `/books/{id}` | `204` | 本と関連メモを削除する（本文なし） |
 
 登録時の状態は `want_to_read` 固定です。状態更新は `WantToRead → Reading → Finished` の順にだけ許可します。
@@ -106,6 +103,8 @@ curl -i -X DELETE http://127.0.0.1:3000/books/1
 | `want_to_read`（未読） | `409` | `200` | `409` |
 | `reading`（読書中） | `409` | `409` | `200` |
 | `finished`（読了） | `409` | `409` | `409` |
+
+一括読了記録は、重複しない 1 件以上 8 件以下の `book_id` と、空でない `body` を受け取ります。要求全体を保存前に検証し、正常系では `results` に読了済みの本とメモを入力順で返します。一冊の読書状態とメモは同じ transaction で保存します。
 
 認識できない状態名や空白だけの入力は `400 Bad Request` です。対象取得時の未検出は `404 Not Found`、取得後の条件付き更新が成立しない場合は途中の削除も含め `409 Conflict` です。保存値の不正や DB エラーは内部詳細を隠して `500 Internal Server Error` に変換します。
 
