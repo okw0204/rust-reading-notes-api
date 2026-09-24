@@ -117,4 +117,4 @@ service は要求された状態名を読み、現在の本を取得し、`expec
 
 確認の根拠は `src/repository/sqlite.rs` の `conditional_update_rejects_a_stale_state` と `conditional_update_rejects_deletion_after_fetch` にあります。型による禁止は `src/domain/book.rs` の正例と `compile_fail` を `cargo test --doc` で確認します。両方を読むと、コンパイル時の保証と保存時の保証を混同せず説明できます。
 
-第 2 部では、値型と型状態が不正な値・操作を防ぐ範囲と、外部データに残る実行時検査を分けました。次は[永続化の契約を trait で読む](../03-abstraction/repository-trait.md)で、service が具体的な SQLite 実装を知らずにこれらの型を扱える理由を追います。
+次は[失敗後に何が残るか](completion-failures.md)で、一冊の原子性と冊子間の部分成功を分け、入力不正、状態競合、依存先の失敗が保存結果へどう表れるかを追います。

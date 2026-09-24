@@ -35,6 +35,43 @@ pub(crate) struct CompletedReading {
     pub(crate) note: Note,
 }
 
+// ANCHOR: reading_completion_failures
+pub(crate) enum ReadingCompletionResult {
+    Completed(CompletedReading),
+    Failed {
+        book_id: BookId,
+        error: ReadingCompletionFailure,
+    },
+}
+
+pub(crate) enum ReadingCompletionFailure {
+    NotFound,
+    Conflict,
+    Internal,
+}
+
+impl From<AppError> for ReadingCompletionFailure {
+    fn from(error: AppError) -> Self {
+        match error {
+            AppError::NotFound => Self::NotFound,
+            AppError::Conflict => Self::Conflict,
+            AppError::Database(error) => {
+                tracing::error!(%error, "reading completion dependency failed");
+                Self::Internal
+            }
+            AppError::InvalidStoredValue(error) => {
+                tracing::error!(%error, "reading completion found an invalid stored value");
+                Self::Internal
+            }
+            AppError::Validation(error) => {
+                tracing::error!(%error, "reading completion dependency returned a validation error");
+                Self::Internal
+            }
+        }
+    }
+}
+// ANCHOR_END: reading_completion_failures
+
 // ANCHOR: generic_service
 pub(crate) struct ReadingService<R> {
     repository: R,
@@ -110,7 +147,7 @@ impl<R: BookRepository> ReadingService<R> {
     pub(crate) async fn record_reading_completions(
         &self,
         input: RecordReadingCompletions,
-    ) -> Result<Vec<CompletedReading>, AppError> {
+    ) -> Result<Vec<ReadingCompletionResult>, AppError> {
         // ANCHOR: reading_completions_validation
         if !(1..=8).contains(&input.items.len()) {
             return Err(AppError::Validation(
@@ -130,20 +167,37 @@ impl<R: BookRepository> ReadingService<R> {
         }
         // ANCHOR_END: reading_completions_validation
 
-        let mut completions = Vec::with_capacity(validated.len());
+        // ANCHOR: reading_completion_item_results
+        let mut results = Vec::with_capacity(validated.len());
         for (book_id, body) in validated {
-            let current = self.repository.find_book(book_id).await?;
-            let reading = match current {
-                StoredBook::Reading(book) => book,
-                _ => return Err(AppError::Conflict),
+            let result = match self.record_reading_completion(book_id, &body).await {
+                Ok(completion) => ReadingCompletionResult::Completed(completion),
+                Err(error) => ReadingCompletionResult::Failed {
+                    book_id,
+                    error: error.into(),
+                },
             };
-            let (book, note) = self
-                .repository
-                .record_reading_completion(reading.finish(), &body)
-                .await?;
-            completions.push(CompletedReading { book, note });
+            results.push(result);
         }
-        Ok(completions)
+        Ok(results)
+    }
+    // ANCHOR_END: reading_completion_item_results
+
+    async fn record_reading_completion(
+        &self,
+        book_id: BookId,
+        body: &NoteBody,
+    ) -> Result<CompletedReading, AppError> {
+        let current = self.repository.find_book(book_id).await?;
+        let reading = match current {
+            StoredBook::Reading(book) => book,
+            _ => return Err(AppError::Conflict),
+        };
+        let (book, note) = self
+            .repository
+            .record_reading_completion(reading.finish(), body)
+            .await?;
+        Ok(CompletedReading { book, note })
     }
     // ANCHOR_END: reading_completions_service
 

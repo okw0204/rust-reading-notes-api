@@ -14,6 +14,7 @@
 - [検証済みの文字列を値型にする](02-types/validated-values.md)
 - [型状態で遷移を制限する](02-types/typestate.md)
 - [実行時の状態を型へ接続する](02-types/runtime-boundaries.md)
+- [失敗後に何が残るか](02-types/completion-failures.md)
 
 # 第 3 部：型を抽象化する
 
