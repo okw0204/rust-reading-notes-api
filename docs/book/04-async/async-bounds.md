@@ -166,7 +166,7 @@ handler の Future は `AppState<R>` を所有し、その中の `Arc` が servi
 
 `AppState<R>` の clone で増えるのは `Arc` の共有所有者です。`ReadingService<R>` や Adapter の保存状態全体を clone するわけではありません。`Arc<T>` は参照カウントを原子的に管理しますが、任意の `T` を自動でスレッド安全に変えません。通常、`Arc<T>` が `Send + Sync` を満たすにも、内側の `T` が `Send + Sync` を満たす必要があります。
 
-production では `R = SqliteBookRepository` であり、共有利用を想定した `SqlitePool` を所有します。制御可能な Router テストでは `R = FakeBookRepository` となり、その `Arc<Mutex<FakeState>>` から、共有所有と排他的な変更が別の役割を持つことを確かめます。次の[状態変更を HTTP から SQLite まで追う](../05-flow/status-update.md)では、production の経路を端から端まで読み直します。
+production では `R = SqliteBookRepository` であり、共有利用を想定した `SqlitePool` を所有します。制御可能な Router テストでは `R = FakeBookRepository` となり、その `Arc<Mutex<FakeState>>` から、共有所有と排他的な変更が別の役割を持つことを確かめます。次の[独立した読了記録を並行に進める](concurrent-completions.md)では、同じ親 Future の中で複数の子 Future を進める仕組みを読みます。
 
 ## 確認
 

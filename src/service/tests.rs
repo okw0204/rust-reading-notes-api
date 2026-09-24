@@ -317,3 +317,75 @@ async fn manages_books_and_notes_through_the_repository() {
         Err(AppError::NotFound)
     ));
 }
+
+#[tokio::test]
+async fn advances_completions_concurrently_and_returns_results_in_input_order() {
+    use std::time::Duration;
+
+    let fake = FakeBookRepository::default();
+    let service = ReadingService::new(fake.clone());
+    let first = service
+        .create_book(CreateBook {
+            title: "First".to_owned(),
+            author: "Author".to_owned(),
+        })
+        .await
+        .unwrap();
+    let second = service
+        .create_book(CreateBook {
+            title: "Second".to_owned(),
+            author: "Author".to_owned(),
+        })
+        .await
+        .unwrap();
+    for book_id in [first.id(), second.id()] {
+        service
+            .update_status(
+                book_id,
+                UpdateStatus {
+                    status: "reading".to_owned(),
+                },
+            )
+            .await
+            .unwrap();
+    }
+
+    let control = fake.control_reading_completions([first.id(), second.id()]);
+    let run = service.record_reading_completions(RecordReadingCompletions {
+        items: vec![
+            RecordReadingCompletion {
+                book_id: first.id(),
+                body: "first note".to_owned(),
+            },
+            RecordReadingCompletion {
+                book_id: second.id(),
+                body: "second note".to_owned(),
+            },
+        ],
+    });
+    let drive = async {
+        control.wait_for_started(2).await;
+        assert!(control.finished().is_empty());
+
+        control.release(second.id());
+        control.wait_for_finished(1).await;
+        assert_eq!(control.finished(), vec![second.id()]);
+        control.release(first.id());
+    };
+
+    let (results, ()) =
+        tokio::time::timeout(Duration::from_secs(5), async { tokio::join!(run, drive) })
+            .await
+            .expect("both completions should start before either is released");
+    let result_ids = results
+        .unwrap()
+        .into_iter()
+        .map(|result| match result {
+            ReadingCompletionResult::Completed(completion) => completion.book.id(),
+            ReadingCompletionResult::Failed { book_id, .. } => {
+                panic!("book {} unexpectedly failed", book_id.0)
+            }
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(result_ids, vec![first.id(), second.id()]);
+}

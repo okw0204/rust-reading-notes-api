@@ -1,5 +1,6 @@
 //! HTTP の詳細を知らずに、入力規則とユースケースを実行します。
 
+use futures_util::stream::{FuturesUnordered, StreamExt};
 use std::collections::HashSet;
 
 use crate::{
@@ -167,18 +168,29 @@ impl<R: BookRepository> ReadingService<R> {
         }
         // ANCHOR_END: reading_completions_validation
 
-        let mut results = Vec::with_capacity(validated.len());
-        for (book_id, body) in validated {
-            let result = match self.record_reading_completion(book_id, &body).await {
-                Ok(completion) => ReadingCompletionResult::Completed(completion),
-                Err(error) => ReadingCompletionResult::Failed {
-                    book_id,
-                    error: error.into(),
-                },
-            };
+        // ANCHOR: reading_completions_concurrency
+        let mut pending = validated
+            .into_iter()
+            .enumerate()
+            .map(|(position, (book_id, body))| async move {
+                let result = match self.record_reading_completion(book_id, &body).await {
+                    Ok(completion) => ReadingCompletionResult::Completed(completion),
+                    Err(error) => ReadingCompletionResult::Failed {
+                        book_id,
+                        error: error.into(),
+                    },
+                };
+                (position, result)
+            })
+            .collect::<FuturesUnordered<_>>();
+
+        let mut results = Vec::with_capacity(pending.len());
+        while let Some(result) = pending.next().await {
             results.push(result);
         }
-        Ok(results)
+        results.sort_unstable_by_key(|(position, _)| *position);
+        Ok(results.into_iter().map(|(_, result)| result).collect())
+        // ANCHOR_END: reading_completions_concurrency
     }
 
     async fn record_reading_completion(
