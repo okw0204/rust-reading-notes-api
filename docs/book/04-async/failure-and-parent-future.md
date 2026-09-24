@@ -67,7 +67,7 @@ stateDiagram-v2
     Dropped --> Stopped
 ```
 
-`dropping_parent_future_stops_pending_completions_and_keeps_saved_results` は、二冊とも保存処理へ入ったあと、一冊目だけを解放して保存を完了させます。二冊目が待機している状態で親 Future を破棄し、その後に二冊目の待機を解いても処理が再開しないことを確認します。最終的な保存状態は、一冊目が読了してメモあり、二冊目が読書中でメモなしです。
+`dropping_parent_future_stops_pending_completions_and_keeps_saved_results` は、二冊とも保存処理へ入ったあと、一冊目だけを解放して保存を完了させます。二冊目が待機している状態で親 Future を破棄し、フェイクの drop guard から未完了の保存処理も破棄されたことを確認します。最終的な保存状態は、一冊目が読了してメモあり、二冊目が読書中でメモなしです。
 
 ### 処理の終了と rollback は範囲が違う
 

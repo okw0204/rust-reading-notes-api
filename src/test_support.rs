@@ -25,6 +25,12 @@ pub(crate) struct ReadingCompletionControl {
     inner: Arc<ReadingCompletionControlInner>,
 }
 
+struct ReadingCompletionAttempt {
+    control: ReadingCompletionControl,
+    book_id: BookId,
+    finished: bool,
+}
+
 struct ReadingCompletionControlInner {
     gates: BTreeMap<i64, Arc<Semaphore>>,
     progress: Mutex<ReadingCompletionProgress>,
@@ -35,6 +41,7 @@ struct ReadingCompletionControlInner {
 struct ReadingCompletionProgress {
     started: Vec<BookId>,
     finished: Vec<BookId>,
+    dropped: Vec<BookId>,
 }
 
 #[derive(Default)]
@@ -93,6 +100,15 @@ impl ReadingCompletionControl {
         }
     }
 
+    fn start(&self, book_id: BookId) -> ReadingCompletionAttempt {
+        self.mark_started(book_id);
+        ReadingCompletionAttempt {
+            control: self.clone(),
+            book_id,
+            finished: false,
+        }
+    }
+
     fn mark_started(&self, book_id: BookId) {
         self.inner.progress.lock().started.push(book_id);
         self.inner.changed.notify_waiters();
@@ -100,6 +116,11 @@ impl ReadingCompletionControl {
 
     fn mark_finished(&self, book_id: BookId) {
         self.inner.progress.lock().finished.push(book_id);
+        self.inner.changed.notify_waiters();
+    }
+
+    fn mark_dropped(&self, book_id: BookId) {
+        self.inner.progress.lock().dropped.push(book_id);
         self.inner.changed.notify_waiters();
     }
 
@@ -133,6 +154,25 @@ impl ReadingCompletionControl {
 
     pub(crate) fn finished(&self) -> Vec<BookId> {
         self.inner.progress.lock().finished.clone()
+    }
+
+    pub(crate) fn dropped(&self) -> Vec<BookId> {
+        self.inner.progress.lock().dropped.clone()
+    }
+}
+
+impl ReadingCompletionAttempt {
+    fn finish(mut self) {
+        self.finished = true;
+        self.control.mark_finished(self.book_id);
+    }
+}
+
+impl Drop for ReadingCompletionAttempt {
+    fn drop(&mut self) {
+        if !self.finished {
+            self.control.mark_dropped(self.book_id);
+        }
     }
 }
 
@@ -223,8 +263,8 @@ impl BookRepository for FakeBookRepository {
     ) -> Result<(StoredBook, Note), AppError> {
         let book_id = book.id();
         let control = self.state.lock().reading_completion_control.clone();
+        let attempt = control.as_ref().map(|control| control.start(book_id));
         if let Some(control) = &control {
-            control.mark_started(book_id);
             control.wait_for_release(book_id).await;
         }
 
@@ -254,8 +294,8 @@ impl BookRepository for FakeBookRepository {
         };
         drop(state);
 
-        if let Some(control) = control {
-            control.mark_finished(book_id);
+        if let Some(attempt) = attempt {
+            attempt.finish();
         }
         result
     }

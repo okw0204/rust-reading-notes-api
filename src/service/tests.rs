@@ -530,9 +530,8 @@ async fn dropping_parent_future_stops_pending_completions_and_keeps_saved_result
     .await
     .expect("the parent future should reach the controlled cancellation point");
 
-    control.release(second.id());
-    tokio::task::yield_now().await;
     assert_eq!(control.finished(), vec![first.id()]);
+    assert_eq!(control.dropped(), vec![second.id()]);
 
     let first_detail = service.get_book(first.id()).await.unwrap();
     assert_eq!(first_detail.book.status(), ReadingStatus::Finished);
