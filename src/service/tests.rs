@@ -389,3 +389,155 @@ async fn advances_completions_concurrently_and_returns_results_in_input_order() 
         .collect::<Vec<_>>();
     assert_eq!(result_ids, vec![first.id(), second.id()]);
 }
+
+#[tokio::test]
+async fn continues_other_completions_after_one_fails() {
+    use std::time::Duration;
+
+    let fake = FakeBookRepository::default();
+    let service = ReadingService::new(fake.clone());
+    let first = service
+        .create_book(CreateBook {
+            title: "First".to_owned(),
+            author: "Author".to_owned(),
+        })
+        .await
+        .unwrap();
+    let second = service
+        .create_book(CreateBook {
+            title: "Second".to_owned(),
+            author: "Author".to_owned(),
+        })
+        .await
+        .unwrap();
+    for book_id in [first.id(), second.id()] {
+        service
+            .update_status(
+                book_id,
+                UpdateStatus {
+                    status: "reading".to_owned(),
+                },
+            )
+            .await
+            .unwrap();
+    }
+
+    let control = fake.control_reading_completions([first.id(), second.id()]);
+    fake.fail_reading_completion(first.id(), AppError::Database(sqlx::Error::PoolClosed));
+    let run = service.record_reading_completions(RecordReadingCompletions {
+        items: vec![
+            RecordReadingCompletion {
+                book_id: first.id(),
+                body: "first note".to_owned(),
+            },
+            RecordReadingCompletion {
+                book_id: second.id(),
+                body: "second note".to_owned(),
+            },
+        ],
+    });
+    let drive = async {
+        control.wait_for_started(2).await;
+        control.release(first.id());
+        control.wait_for_finished(1).await;
+        assert_eq!(control.finished(), vec![first.id()]);
+        control.release(second.id());
+    };
+
+    let (results, ()) =
+        tokio::time::timeout(Duration::from_secs(5), async { tokio::join!(run, drive) })
+            .await
+            .expect("the failure should not stop the other completion");
+    let results = results.unwrap();
+    assert!(matches!(
+        &results[0],
+        ReadingCompletionResult::Failed {
+            book_id,
+            error: ReadingCompletionFailure::Internal,
+        } if *book_id == first.id()
+    ));
+    assert!(matches!(
+        &results[1],
+        ReadingCompletionResult::Completed(completion)
+            if completion.book.id() == second.id()
+    ));
+
+    let first_detail = service.get_book(first.id()).await.unwrap();
+    assert_eq!(first_detail.book.status(), ReadingStatus::Reading);
+    assert!(first_detail.notes.is_empty());
+    let second_detail = service.get_book(second.id()).await.unwrap();
+    assert_eq!(second_detail.book.status(), ReadingStatus::Finished);
+    assert_eq!(second_detail.notes.len(), 1);
+    assert_eq!(second_detail.notes[0].body.as_str(), "second note");
+}
+
+#[tokio::test]
+async fn dropping_parent_future_stops_pending_completions_and_keeps_saved_results() {
+    use std::time::Duration;
+
+    let fake = FakeBookRepository::default();
+    let service = ReadingService::new(fake.clone());
+    let first = service
+        .create_book(CreateBook {
+            title: "First".to_owned(),
+            author: "Author".to_owned(),
+        })
+        .await
+        .unwrap();
+    let second = service
+        .create_book(CreateBook {
+            title: "Second".to_owned(),
+            author: "Author".to_owned(),
+        })
+        .await
+        .unwrap();
+    for book_id in [first.id(), second.id()] {
+        service
+            .update_status(
+                book_id,
+                UpdateStatus {
+                    status: "reading".to_owned(),
+                },
+            )
+            .await
+            .unwrap();
+    }
+
+    let control = fake.control_reading_completions([first.id(), second.id()]);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let run = service.record_reading_completions(RecordReadingCompletions {
+            items: vec![
+                RecordReadingCompletion {
+                    book_id: first.id(),
+                    body: "first note".to_owned(),
+                },
+                RecordReadingCompletion {
+                    book_id: second.id(),
+                    body: "second note".to_owned(),
+                },
+            ],
+        });
+        tokio::pin!(run);
+        tokio::select! {
+            _ = &mut run => panic!("the second completion is still waiting"),
+            () = async {
+                control.wait_for_started(2).await;
+                control.release(first.id());
+                control.wait_for_finished(1).await;
+            } => {}
+        }
+    })
+    .await
+    .expect("the parent future should reach the controlled cancellation point");
+
+    assert_eq!(control.finished(), vec![first.id()]);
+    assert_eq!(control.dropped(), vec![second.id()]);
+
+    let first_detail = service.get_book(first.id()).await.unwrap();
+    assert_eq!(first_detail.book.status(), ReadingStatus::Finished);
+    assert_eq!(first_detail.notes.len(), 1);
+    assert_eq!(first_detail.notes[0].body.as_str(), "first note");
+    let second_detail = service.get_book(second.id()).await.unwrap();
+    assert_eq!(second_detail.book.status(), ReadingStatus::Reading);
+    assert!(second_detail.notes.is_empty());
+}

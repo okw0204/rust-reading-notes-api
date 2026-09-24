@@ -25,6 +25,12 @@ pub(crate) struct ReadingCompletionControl {
     inner: Arc<ReadingCompletionControlInner>,
 }
 
+struct ReadingCompletionAttempt {
+    control: ReadingCompletionControl,
+    book_id: BookId,
+    finished: bool,
+}
+
 struct ReadingCompletionControlInner {
     gates: BTreeMap<i64, Arc<Semaphore>>,
     progress: Mutex<ReadingCompletionProgress>,
@@ -35,6 +41,7 @@ struct ReadingCompletionControlInner {
 struct ReadingCompletionProgress {
     started: Vec<BookId>,
     finished: Vec<BookId>,
+    dropped: Vec<BookId>,
 }
 
 #[derive(Default)]
@@ -46,11 +53,19 @@ struct FakeState {
     next_update_error: Option<AppError>,
     calls: usize,
     reading_completion_control: Option<ReadingCompletionControl>,
+    reading_completion_errors: BTreeMap<i64, AppError>,
 }
 
 impl FakeBookRepository {
     pub(crate) fn fail_next_update(&self, error: AppError) {
         self.state.lock().next_update_error = Some(error);
+    }
+
+    pub(crate) fn fail_reading_completion(&self, book_id: BookId, error: AppError) {
+        self.state
+            .lock()
+            .reading_completion_errors
+            .insert(book_id.0, error);
     }
 
     pub(crate) fn calls(&self) -> usize {
@@ -85,6 +100,15 @@ impl ReadingCompletionControl {
         }
     }
 
+    fn start(&self, book_id: BookId) -> ReadingCompletionAttempt {
+        self.mark_started(book_id);
+        ReadingCompletionAttempt {
+            control: self.clone(),
+            book_id,
+            finished: false,
+        }
+    }
+
     fn mark_started(&self, book_id: BookId) {
         self.inner.progress.lock().started.push(book_id);
         self.inner.changed.notify_waiters();
@@ -92,6 +116,11 @@ impl ReadingCompletionControl {
 
     fn mark_finished(&self, book_id: BookId) {
         self.inner.progress.lock().finished.push(book_id);
+        self.inner.changed.notify_waiters();
+    }
+
+    fn mark_dropped(&self, book_id: BookId) {
+        self.inner.progress.lock().dropped.push(book_id);
         self.inner.changed.notify_waiters();
     }
 
@@ -125,6 +154,25 @@ impl ReadingCompletionControl {
 
     pub(crate) fn finished(&self) -> Vec<BookId> {
         self.inner.progress.lock().finished.clone()
+    }
+
+    pub(crate) fn dropped(&self) -> Vec<BookId> {
+        self.inner.progress.lock().dropped.clone()
+    }
+}
+
+impl ReadingCompletionAttempt {
+    fn finish(mut self) {
+        self.finished = true;
+        self.control.mark_finished(self.book_id);
+    }
+}
+
+impl Drop for ReadingCompletionAttempt {
+    fn drop(&mut self) {
+        if !self.finished {
+            self.control.mark_dropped(self.book_id);
+        }
     }
 }
 
@@ -215,36 +263,41 @@ impl BookRepository for FakeBookRepository {
     ) -> Result<(StoredBook, Note), AppError> {
         let book_id = book.id();
         let control = self.state.lock().reading_completion_control.clone();
+        let attempt = control.as_ref().map(|control| control.start(book_id));
         if let Some(control) = &control {
-            control.mark_started(book_id);
             control.wait_for_release(book_id).await;
         }
 
         let mut state = self.state.lock();
         state.calls += 1;
-        if let Some(error) = state.next_update_error.take() {
-            return Err(error);
-        }
-
-        let finished = StoredBook::Finished(book);
-        let id = finished.id().0;
-        if state.books.get(&id).map(StoredBook::status) != Some(ReadingStatus::Reading) {
-            return Err(AppError::Conflict);
-        }
-
-        state.next_note_id += 1;
-        let note = Note {
-            id: NoteId(state.next_note_id),
-            body: body.clone(),
+        let error = state
+            .reading_completion_errors
+            .remove(&book_id.0)
+            .or_else(|| state.next_update_error.take());
+        let result = if let Some(error) = error {
+            Err(error)
+        } else {
+            let finished = StoredBook::Finished(book);
+            let id = finished.id().0;
+            if state.books.get(&id).map(StoredBook::status) != Some(ReadingStatus::Reading) {
+                Err(AppError::Conflict)
+            } else {
+                state.next_note_id += 1;
+                let note = Note {
+                    id: NoteId(state.next_note_id),
+                    body: body.clone(),
+                };
+                state.books.insert(id, finished.clone());
+                state.notes.entry(id).or_default().push(note.clone());
+                Ok((finished, note))
+            }
         };
-        state.books.insert(id, finished.clone());
-        state.notes.entry(id).or_default().push(note.clone());
         drop(state);
 
-        if let Some(control) = control {
-            control.mark_finished(book_id);
+        if let Some(attempt) = attempt {
+            attempt.finish();
         }
-        Ok((finished, note))
+        result
     }
 
     async fn delete_book(&self, id: BookId) -> Result<(), AppError> {

@@ -42,7 +42,7 @@ Markdown 原文ではソースの `include` や Mermaid の図が生成 HTML と
 | 第 1 部：値と関数 | [値を受け取る関数](docs/book/01-values/values-and-functions.md)、[一括読了記録の入力](docs/book/01-values/reading-completion-input.md)、所有権の移動、部分的な移動、借用、`Clone`、`Result` と `?` |
 | 第 2 部：型と状態 | [検証済みの値型](docs/book/02-types/validated-values.md)、`Book<S>` の型状態、DB の実行時状態、[失敗後の保存結果](docs/book/02-types/completion-failures.md) |
 | 第 3 部：型を抽象化する | [repository trait](docs/book/03-abstraction/repository-trait.md)、ジェネリックな service、具体的な Adapter |
-| 第 4 部：非同期と共有 | [Future の借用](docs/book/04-async/async-bounds.md)、`Send`・`Sync`・`'static`・`Arc` |
+| 第 4 部：非同期と共有 | [Future の借用](docs/book/04-async/async-bounds.md)、[独立した処理の並行進行](docs/book/04-async/concurrent-completions.md)、[失敗と親 Future の終了](docs/book/04-async/failure-and-parent-future.md)、`Send`・`Sync`・`'static`・`Arc` |
 | 第 5 部：全体を読み直す | [状態変更の端から端の流れ](docs/book/05-flow/status-update.md)、service のフェイク、SQLite の条件付き更新、Router の HTTP 統合テスト |
 
 各章は「問い → 読む場所と順序 → 解説 → 確認 → 解答」の順です。完成した実装と検証済みの例を根拠に読み進められます。
