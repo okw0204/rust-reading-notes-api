@@ -26,6 +26,7 @@
 - [非同期処理の借用と共有を読む](04-async/async-bounds.md)
 - [独立した読了記録を並行に進める](04-async/concurrent-completions.md)
 - [完了順と入力順を分ける](04-async/completion-order.md)
+- [失敗と親 Future の終了](04-async/failure-and-parent-future.md)
 
 # 第 5 部：全体を読み直す
 
