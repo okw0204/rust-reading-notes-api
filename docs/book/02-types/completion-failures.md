@@ -38,13 +38,9 @@
 
 `From<AppError>` は repository から返った内部の失敗を、読了結果で公開する 3 種類へ変換します。`Database` と `InvalidStoredValue` は原因をログへ残しますが、利用者向けにはどちらも `Internal` です。SQL、trigger、保存されていた不正な値などの詳細は応答へ含めません。repository から想定外の `Validation` が返った場合も、利用者の入力不正とは扱わず内部失敗として記録します。
 
-## 失敗しても次の一冊を処理する
+## 一冊の失敗を結果として扱う
 
-```rust,ignore
-{{#include ../../../src/service.rs:reading_completion_item_results}}
-```
-
-検証済みの項目を一冊ずつ処理し、成功は `Completed`、失敗は `Failed` として `results` へ追加します。`?` で一冊の失敗を外側へ返さないため、後続の本も処理されます。この段階では入力順に処理しているので、そのまま入力順の結果になります。後の章で並行に進める場合も、入力と結果の対応を保つ契約は変わりません。
+`ReadingCompletionResult::Failed` は、一括読了記録そのものを失敗させる `AppError` ではなく、一冊分の読了結果です。service は一冊の失敗をこの値へ変換し、ほかの本の結果とともに返します。各処理の進み方や完了順にかかわらず、利用者へ返す `results` は入力との対応を保つことが契約です。
 
 handler は `ReadingCompletionResult` を次のどちらかへ変換します。
 

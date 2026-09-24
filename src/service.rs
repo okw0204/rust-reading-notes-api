@@ -167,7 +167,6 @@ impl<R: BookRepository> ReadingService<R> {
         }
         // ANCHOR_END: reading_completions_validation
 
-        // ANCHOR: reading_completion_item_results
         let mut results = Vec::with_capacity(validated.len());
         for (book_id, body) in validated {
             let result = match self.record_reading_completion(book_id, &body).await {
@@ -181,7 +180,6 @@ impl<R: BookRepository> ReadingService<R> {
         }
         Ok(results)
     }
-    // ANCHOR_END: reading_completion_item_results
 
     async fn record_reading_completion(
         &self,
