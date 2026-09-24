@@ -41,6 +41,12 @@ sequenceDiagram
     Handler-->>Client: 200 + results
 ```
 
+次の handler は、HTTP が所有する各入力を service の入力へ移し、完了後の読了結果を応答 DTO へ移す境界です。図の入口と復路を、完成形のコードで確認します。
+
+```rust,ignore
+{{#include ../../../src/handler.rs:reading_completions_handler}}
+```
+
 ## 解説
 
 Axum の `Json` extractor が JSON の構造を読み、handler は `Vec` と各 `String` を所有します。構造が不正なら handler より前に Axum 標準の rejection が返り、アプリケーション共通のエラー JSON にはなりません。
