@@ -1,5 +1,7 @@
 //! HTTP の詳細を知らずに、入力規則とユースケースを実行します。
 
+use std::collections::HashSet;
+
 use crate::{
     domain::{Author, BookDetail, BookId, BookTitle, Note, NoteBody, ReadingStatus, StoredBook},
     error::AppError,
@@ -17,6 +19,20 @@ pub(crate) struct AddNote {
 
 pub(crate) struct UpdateStatus {
     pub(crate) status: String,
+}
+
+pub(crate) struct RecordReadingCompletion {
+    pub(crate) book_id: BookId,
+    pub(crate) body: String,
+}
+
+pub(crate) struct RecordReadingCompletions {
+    pub(crate) items: Vec<RecordReadingCompletion>,
+}
+
+pub(crate) struct CompletedReading {
+    pub(crate) book: StoredBook,
+    pub(crate) note: Note,
 }
 
 // ANCHOR: generic_service
@@ -89,6 +105,47 @@ impl<R: BookRepository> ReadingService<R> {
     }
 
     // ANCHOR_END: update_status_service
+
+    // ANCHOR: reading_completions_service
+    pub(crate) async fn record_reading_completions(
+        &self,
+        input: RecordReadingCompletions,
+    ) -> Result<Vec<CompletedReading>, AppError> {
+        // ANCHOR: reading_completions_validation
+        if !(1..=8).contains(&input.items.len()) {
+            return Err(AppError::Validation(
+                "items must contain between 1 and 8 entries".to_owned(),
+            ));
+        }
+
+        let mut seen_book_ids = HashSet::with_capacity(input.items.len());
+        let mut validated = Vec::with_capacity(input.items.len());
+        for item in input.items {
+            if !seen_book_ids.insert(item.book_id.0) {
+                return Err(AppError::Validation(
+                    "book_id must not be duplicated".to_owned(),
+                ));
+            }
+            validated.push((item.book_id, NoteBody::try_from(item.body)?));
+        }
+        // ANCHOR_END: reading_completions_validation
+
+        let mut completions = Vec::with_capacity(validated.len());
+        for (book_id, body) in validated {
+            let current = self.repository.find_book(book_id).await?;
+            let reading = match current {
+                StoredBook::Reading(book) => book,
+                _ => return Err(AppError::Conflict),
+            };
+            let (book, note) = self
+                .repository
+                .record_reading_completion(reading.finish(), &body)
+                .await?;
+            completions.push(CompletedReading { book, note });
+        }
+        Ok(completions)
+    }
+    // ANCHOR_END: reading_completions_service
 
     pub(crate) async fn delete_book(&self, book_id: BookId) -> Result<(), AppError> {
         self.repository.delete_book(book_id).await

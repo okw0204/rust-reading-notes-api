@@ -1,12 +1,14 @@
 //! DB に接続せず、保存結果と一度だけの保存失敗を制御するテスト用実装です。
 
-use std::{
-    collections::BTreeMap,
-    sync::{Arc, Mutex},
-};
+use std::{collections::BTreeMap, sync::Arc};
+
+use parking_lot::Mutex;
 
 use crate::{
-    domain::{Author, Book, BookId, BookTitle, Note, NoteBody, NoteId, ReadingStatus, StoredBook},
+    domain::{
+        Author, Book, BookId, BookTitle, Finished, Note, NoteBody, NoteId, ReadingStatus,
+        StoredBook,
+    },
     error::AppError,
     repository::BookRepository,
 };
@@ -29,11 +31,11 @@ struct FakeState {
 
 impl FakeBookRepository {
     pub(crate) fn fail_next_update(&self, error: AppError) {
-        self.state.lock().unwrap().next_update_error = Some(error);
+        self.state.lock().next_update_error = Some(error);
     }
 
     pub(crate) fn calls(&self) -> usize {
-        self.state.lock().unwrap().calls
+        self.state.lock().calls
     }
 }
 
@@ -46,7 +48,7 @@ impl BookRepository for FakeBookRepository {
         title: &BookTitle,
         author: &Author,
     ) -> Result<StoredBook, AppError> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock();
         state.calls += 1;
         state.next_book_id += 1;
         let book = StoredBook::WantToRead(Book::new(
@@ -59,7 +61,7 @@ impl BookRepository for FakeBookRepository {
     }
 
     async fn list_books(&self, status: Option<ReadingStatus>) -> Result<Vec<StoredBook>, AppError> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock();
         state.calls += 1;
         Ok(state
             .books
@@ -70,19 +72,19 @@ impl BookRepository for FakeBookRepository {
     }
 
     async fn find_book(&self, id: BookId) -> Result<StoredBook, AppError> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock();
         state.calls += 1;
         state.books.get(&id.0).cloned().ok_or(AppError::NotFound)
     }
 
     async fn list_notes(&self, book_id: BookId) -> Result<Vec<Note>, AppError> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock();
         state.calls += 1;
         Ok(state.notes.get(&book_id.0).cloned().unwrap_or_default())
     }
 
     async fn insert_note(&self, book_id: BookId, body: &NoteBody) -> Result<Note, AppError> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock();
         state.calls += 1;
         if !state.books.contains_key(&book_id.0) {
             return Err(AppError::NotFound);
@@ -102,7 +104,7 @@ impl BookRepository for FakeBookRepository {
         expected: ReadingStatus,
         next: StoredBook,
     ) -> Result<StoredBook, AppError> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock();
         state.calls += 1;
         if let Some(error) = state.next_update_error.take() {
             return Err(error);
@@ -117,8 +119,35 @@ impl BookRepository for FakeBookRepository {
 
     // ANCHOR_END: fake_update
 
+    async fn record_reading_completion(
+        &self,
+        book: Book<Finished>,
+        body: &NoteBody,
+    ) -> Result<(StoredBook, Note), AppError> {
+        let mut state = self.state.lock();
+        state.calls += 1;
+        if let Some(error) = state.next_update_error.take() {
+            return Err(error);
+        }
+
+        let finished = StoredBook::Finished(book);
+        let id = finished.id().0;
+        if state.books.get(&id).map(StoredBook::status) != Some(ReadingStatus::Reading) {
+            return Err(AppError::Conflict);
+        }
+
+        state.next_note_id += 1;
+        let note = Note {
+            id: NoteId(state.next_note_id),
+            body: body.clone(),
+        };
+        state.books.insert(id, finished.clone());
+        state.notes.entry(id).or_default().push(note.clone());
+        Ok((finished, note))
+    }
+
     async fn delete_book(&self, id: BookId) -> Result<(), AppError> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock();
         state.calls += 1;
         state.books.remove(&id.0).ok_or(AppError::NotFound)?;
         state.notes.remove(&id.0);

@@ -4,7 +4,10 @@ use super::BookRepository;
 use sqlx::{FromRow, SqlitePool};
 
 use crate::{
-    domain::{Author, BookId, BookTitle, Note, NoteBody, NoteId, ReadingStatus, StoredBook},
+    domain::{
+        Author, Book, BookId, BookTitle, Finished, Note, NoteBody, NoteId, ReadingStatus,
+        StoredBook,
+    },
     error::AppError,
 };
 
@@ -187,6 +190,46 @@ impl BookRepository for SqliteBookRepository {
 
     // ANCHOR_END: conditional_update
     // ANCHOR_END: conditional_status_sqlite
+
+    // ANCHOR: reading_completion_transaction
+    async fn record_reading_completion(
+        &self,
+        book: Book<Finished>,
+        body: &NoteBody,
+    ) -> Result<(StoredBook, Note), AppError> {
+        let mut transaction = self.pool.begin().await?;
+        let finished = StoredBook::Finished(book);
+        let book_row = sqlx::query_as::<_, BookRow>(
+            r#"
+        UPDATE books
+        SET status = 'finished'
+        WHERE id = ? AND status = 'reading'
+        RETURNING id, title, author, status
+        "#,
+        )
+        .bind(finished.id().0)
+        .fetch_optional(&mut *transaction)
+        .await?
+        .ok_or(AppError::Conflict)?;
+
+        let note_row = sqlx::query_as::<_, NoteRow>(
+            r#"
+        INSERT INTO notes (book_id, body)
+        VALUES (?, ?)
+        RETURNING id, body
+        "#,
+        )
+        .bind(finished.id().0)
+        .bind(body.as_str())
+        .fetch_one(&mut *transaction)
+        .await?;
+
+        let saved_book = book_row.try_into()?;
+        let note = note_row.try_into()?;
+        transaction.commit().await?;
+        Ok((saved_book, note))
+    }
+    // ANCHOR_END: reading_completion_transaction
 
     async fn delete_book(&self, id: BookId) -> Result<(), AppError> {
         let result = sqlx::query("DELETE FROM books WHERE id = ?")

@@ -58,6 +58,10 @@ where
             "/books/{id}/notes",
             axum::routing::post(handler::add_note::<R>),
         )
+        .route(
+            "/reading-completions",
+            axum::routing::post(handler::record_reading_completions::<R>),
+        )
         .with_state(state)
 }
 
