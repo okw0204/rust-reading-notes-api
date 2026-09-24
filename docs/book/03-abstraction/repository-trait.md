@@ -1,8 +1,12 @@
-# 永続化の契約を trait で読む
+# `BookRepository` の契約
 
 ## 問い
 
 service は SQL を書かずに、保存の成功・未検出・競合をどう区別できるのでしょうか。`BookRepository` をメソッド一覧としてではなく、SQLite とフェイクがともに満たす Interface として読みます。
+
+## 前提
+
+[失敗後に何が残るか](../02-types/completion-failures.md)まで読み、一冊では状態とメモを原子的に保存し、冊子間では部分成功を許す契約を確認しているものとします。
 
 ## 読む場所と順序
 
@@ -122,4 +126,4 @@ service は `WHERE` 句や `BookRow` を知りません。`find_book` の `NotFo
 5. どの Adapter も同じドメイン型を返すことが契約であり、service 側に関連型の等値制約を追加するだけになるためです。
 6. 返り値の `impl Future` を持つ現在の trait は dyn 互換ではありません。また Adapter は実行時に切り替えないため、box 化や動的ディスパッチを伴う別 Interface を導入する必要もありません。
 
-次は[ジェネリックな service](generic-service.md)で、SQLite とフェイクの具体型がどこで決まり、同じ service の呼び出しがどちらへ届くかを追います。
+次は[フェイクと SQLite Adapter](adapters.md)で、具体型がどこで決まり、二つの Adapter が同じ契約をどう観測可能にするかを追います。

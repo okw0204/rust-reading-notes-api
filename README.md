@@ -1,6 +1,6 @@
 # Rust Reading Notes API
 
-Rust Book を一通り読んだあとに、完成した Web API を小さな値と関数から HTTP、DB まで段階的に追うための日本語コードリーディング教材です。読書記録を題材に、所有権、型、抽象化、非同期処理を Axum・SQLx・SQLite の実装と結びつけます。
+Rust Book を一通り読んだあとに、一括読了記録という一つの完成した処理を、小さな入力値から HTTP、SQLite、複数の Future まで段階的に追う日本語コードリーディング教材です。読書記録を題材に、所有権、型、抽象化、非同期処理を Axum・SQLx・SQLite の実装と結びつけます。
 
 ```text
 Router → handler → ReadingService<R> → BookRepository の SQLite 実装 → DB
@@ -11,7 +11,7 @@ Router → handler → ReadingService<R> → BookRepository の SQLite 実装 �
 
 ## コードリーディング教材
 
-[教材の使い方](docs/book/introduction.md)と[目次](docs/book/SUMMARY.md)から読み始められます。
+[完成形と一括読了記録](docs/book/introduction.md)と[目次](docs/book/SUMMARY.md)から読み始められます。
 ローカルで目次・検索・図付きの教材を開くには、mise でツールを導入します。
 
 ### 初回のみ：設定の信頼とツールのインストール
@@ -39,11 +39,11 @@ Markdown 原文ではソースの `include` や Mermaid の図が生成 HTML と
 
 | 部 | 内容と入口 |
 | --- | --- |
-| 第 1 部：値と関数 | [値を受け取る関数](docs/book/01-values/values-and-functions.md)、[一括読了記録の入力](docs/book/01-values/reading-completion-input.md)、所有権の移動、部分的な移動、借用、`Clone`、`Result` と `?` |
-| 第 2 部：型と状態 | [検証済みの値型](docs/book/02-types/validated-values.md)、`Book<S>` の型状態、DB の実行時状態、[失敗後の保存結果](docs/book/02-types/completion-failures.md) |
-| 第 3 部：型を抽象化する | [repository trait](docs/book/03-abstraction/repository-trait.md)、ジェネリックな service、具体的な Adapter |
-| 第 4 部：非同期と共有 | [Future の借用](docs/book/04-async/async-bounds.md)、[独立した処理の並行進行](docs/book/04-async/concurrent-completions.md)、[失敗と親 Future の終了](docs/book/04-async/failure-and-parent-future.md)、`Send`・`Sync`・`'static`・`Arc` |
-| 第 5 部：全体を読み直す | [状態変更の端から端の流れ](docs/book/05-flow/status-update.md)、service のフェイク、SQLite の条件付き更新、Router の HTTP 統合テスト |
+| 第 1 部：一件の値を整える | [要求から検証済みの入力へ](docs/book/01-values/reading-completion-input.md)、[借用して検査し、所有して渡す](docs/book/01-values/borrow-and-own.md) |
+| 第 2 部：一冊の読了を成立させる | [保存状態を型状態へ接続する](docs/book/02-types/stored-state-to-typestate.md)、[原子的な保存](docs/book/02-types/atomic-completion.md)、[失敗後の保存結果](docs/book/02-types/completion-failures.md) |
+| 第 3 部：Interface の向こうを読む | [`BookRepository` の契約](docs/book/03-abstraction/repository-trait.md)、[フェイクと SQLite Adapter](docs/book/03-abstraction/adapters.md) |
+| 第 4 部：複数の処理を進める | [Future が値を保持する範囲](docs/book/04-async/future-values.md)、[独立した処理の並行進行](docs/book/04-async/concurrent-completions.md)、[結果順](docs/book/04-async/completion-order.md)、[失敗と親 Future の終了](docs/book/04-async/failure-and-parent-future.md) |
+| 第 5 部：利用者の経路を読み直す | [HTTP から SQLite まで](docs/book/05-flow/http-to-sqlite.md)、[検証の保証と限界](docs/book/05-flow/verification-limits.md) |
 
 各章は「問い → 読む場所と順序 → 解説 → 確認 → 解答」の順です。完成した実装と検証済みの例を根拠に読み進められます。
 
@@ -137,8 +137,7 @@ src/
 ├── handler.rs          # HTTP の入力・出力
 ├── service.rs          # ReadingService<R> とユースケース
 ├── service/
-│   ├── tests.rs        # service の判断と失敗の検査
-│   └── tests/fake.rs   # メモリ上の repository
+│   └── tests.rs        # service の判断、並行進行、終了の検査
 ├── repository.rs       # BookRepository の契約
 ├── repository/sqlite.rs # SQL、行変換、DB テスト
 └── error.rs            # エラーと HTTP 応答の変換
@@ -160,6 +159,6 @@ mise exec -- mdbook build
 git diff --check
 ```
 
-`cargo test` は型状態の doctest（合法な操作と `compile_fail`）、service のフェイク、SQLite の保存契約、Router の統合テストを実行します。API テストは独立したインメモリ SQLite（`sqlite::memory:`）を1接続で使い、repository の `#[sqlx::test]` は SQLx が独立したファイル DB と pool を用意します。後者は `connect_database` の1接続設定を引き継ぎません。どちらもアプリと同じ migration を適用し、手元の `reading-notes.db` を共有しません。フェイクでは保存失敗を注入し、repository テストでは実 SQL、API テストでは HTTP と保存結果を観測します。
+`cargo test` は型状態の doctest（合法な操作と `compile_fail`）、service のフェイク、SQLite の保存契約、Router の統合テストを実行します。API テストは独立したインメモリ SQLite（`sqlite::memory:`）を 1 接続で使い、repository の `#[sqlx::test]` は SQLx が独立したファイル DB と pool を用意します。後者は `connect_database` の 1 接続設定を引き継ぎません。どちらもアプリと同じ migration を適用し、手元の `reading-notes.db` を共有しません。フェイクでは失敗と Future の進行を制御し、repository テストでは実 SQL、API テストでは HTTP と保存結果を観測します。
 
-`mdbook build` の生成先は `book/` で、Git 管理対象外です。検証の読み方は[第 5 部](docs/book/05-flow/status-update.md)で確認できます。
+`mdbook build` の生成先は `book/` で、Git 管理対象外です。検証の読み方は[検証の保証と限界](docs/book/05-flow/verification-limits.md)で確認できます。

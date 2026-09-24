@@ -6,7 +6,7 @@
 
 ## 前提
 
-[非同期処理の借用と共有を読む](async-bounds.md)まで読み、`async fn` の呼び出しが Future を返すこと、`.await` で `Pending` になった Future が再開に必要な値を保持することを確認しているものとします。
+[Future が値を保持する範囲](future-values.md)まで読み、`async fn` の呼び出しが Future を返すこと、子 Future が再開に必要な所有値と借用を保持することを確認しているものとします。
 
 ## 読む場所と順序
 
