@@ -46,11 +46,19 @@ struct FakeState {
     next_update_error: Option<AppError>,
     calls: usize,
     reading_completion_control: Option<ReadingCompletionControl>,
+    reading_completion_errors: BTreeMap<i64, AppError>,
 }
 
 impl FakeBookRepository {
     pub(crate) fn fail_next_update(&self, error: AppError) {
         self.state.lock().next_update_error = Some(error);
+    }
+
+    pub(crate) fn fail_reading_completion(&self, book_id: BookId, error: AppError) {
+        self.state
+            .lock()
+            .reading_completion_errors
+            .insert(book_id.0, error);
     }
 
     pub(crate) fn calls(&self) -> usize {
@@ -222,29 +230,34 @@ impl BookRepository for FakeBookRepository {
 
         let mut state = self.state.lock();
         state.calls += 1;
-        if let Some(error) = state.next_update_error.take() {
-            return Err(error);
-        }
-
-        let finished = StoredBook::Finished(book);
-        let id = finished.id().0;
-        if state.books.get(&id).map(StoredBook::status) != Some(ReadingStatus::Reading) {
-            return Err(AppError::Conflict);
-        }
-
-        state.next_note_id += 1;
-        let note = Note {
-            id: NoteId(state.next_note_id),
-            body: body.clone(),
+        let error = state
+            .reading_completion_errors
+            .remove(&book_id.0)
+            .or_else(|| state.next_update_error.take());
+        let result = if let Some(error) = error {
+            Err(error)
+        } else {
+            let finished = StoredBook::Finished(book);
+            let id = finished.id().0;
+            if state.books.get(&id).map(StoredBook::status) != Some(ReadingStatus::Reading) {
+                Err(AppError::Conflict)
+            } else {
+                state.next_note_id += 1;
+                let note = Note {
+                    id: NoteId(state.next_note_id),
+                    body: body.clone(),
+                };
+                state.books.insert(id, finished.clone());
+                state.notes.entry(id).or_default().push(note.clone());
+                Ok((finished, note))
+            }
         };
-        state.books.insert(id, finished.clone());
-        state.notes.entry(id).or_default().push(note.clone());
         drop(state);
 
         if let Some(control) = control {
             control.mark_finished(book_id);
         }
-        Ok((finished, note))
+        result
     }
 
     async fn delete_book(&self, id: BookId) -> Result<(), AppError> {
