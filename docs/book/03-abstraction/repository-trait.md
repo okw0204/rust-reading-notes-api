@@ -7,10 +7,11 @@ service は SQL を書かずに、保存の成功・未検出・競合をどう�
 ## 読む場所と順序
 
 1. `src/repository.rs` の `BookRepository` 全体。
-2. `src/service.rs` の `create_book` と `update_status`。
-3. `src/repository/sqlite.rs` の `impl BookRepository for SqliteBookRepository`、`insert_book`、`find_book`、`update_book_status`。
-4. `src/test_support.rs` の `impl BookRepository for FakeBookRepository` と `update_book_status`。
+2. `src/service.rs` の `create_book`、`update_status`、`record_reading_completion`。
+3. `src/repository/sqlite.rs` の `impl BookRepository for SqliteBookRepository`、`insert_book`、`find_book`、`update_book_status`、`record_reading_completion`。
+4. `src/test_support.rs` の `impl BookRepository for FakeBookRepository`、`update_book_status`、`record_reading_completion`。
 5. `src/repository/sqlite.rs` と `src/service/tests.rs` にある、古い状態からの更新を拒否するテスト。
+6. `tests/api.rs` の `rolls_back_a_completion_when_adding_its_note_fails`。
 
 ```mermaid
 flowchart LR
@@ -41,11 +42,14 @@ trait の宣言からは、呼び出せる操作、引数、完了時の値、�
 | `list_notes` | 本の ID からメモ一覧を返す | 本やメモがなくても空の一覧 |
 | `insert_note` | 検証済みの本文を借り、採番済みのメモを返す | 本がなければ `NotFound` |
 | `update_book_status` | 取得時の状態と遷移済みの本を受け取る | 状態不一致と取得後の削除は `Conflict` とし、その場合は変更しない |
+| `record_reading_completion` | 読了へ遷移済みの本と検証済みのメモ本文を受け取る | 現在状態が読書中の場合だけ、状態とメモを一つの保存単位で確定する。競合や依存先の失敗では片方だけを残さない |
 | `delete_book` | ID で本を削除する | 関連メモも削除し、本がなければ `NotFound` |
 
 たとえば `insert_book` の引数が値型なので、空白だけの書名をこの Seam へ持ち込むことは防げます。一方、実装が未読で保存することや、`list_books` が ID 順であることは型からは証明できません。rustdoc、Adapter の実装、観測可能な結果を確かめるテストまでが Interface の根拠です。
 
 `update_book_status` では、service が実行時の状態を見て合法な遷移を作り、repository が取得時の状態を前提に保存できるか調べます。型状態がメモリ上の操作を制限し、repository の条件付き更新が永続化の競合を検出します。どちらか一方で両方を保証しているわけではありません。
+
+`record_reading_completion` では、service が `Book<Reading>` を `Book<Finished>` へ進め、repository が DB の現在状態をもう一度検査します。成功時は読了状態とメモの両方を返し、失敗時はどちらも残しません。この原子性はタプルの返り値だけからは証明できないため、rustdoc、SQLite の transaction、フェイクの更新順、失敗後の保存状態を確認するテストを一緒に読みます。
 
 ### impl Future は実装ごとの具体型を隠す
 
@@ -71,6 +75,8 @@ SQLite Adapter は SQL、接続、DB 行とドメイン型の変換を内部に�
 
 service は `WHERE` 句や `BookRow` を知りません。`find_book` の `NotFound`、条件付き保存の `Conflict`、成功時の `StoredBook` という Interface を使って処理を組み立てます。そのため SQL の実装知識が service の各メソッドへ散らばりません。
 
+一括読了記録では、状態を `finished` へ変える条件付き更新とメモ追加を同じ transaction で実行します。メモ追加が失敗すると transaction を rollback し、状態更新だけを残しません。service は SQL の順序を知らず、「両方が保存された成功値か、どちらも残らない失敗」という Interface に依存します。
+
 ### フェイク Adapter は同じ契約を制御可能にする
 
 ```rust,ignore
@@ -78,6 +84,8 @@ service は `WHERE` 句や `BookRow` を知りません。`find_book` の `NotFo
 ```
 
 フェイクも `BookRepository` を実装し、`BTreeMap` の現在状態が `expected` と一致するときだけ更新します。状態不一致と取得後の削除を `Conflict` にし、注入した保存エラーを変更前に返します。常に成功するだけの代用品ではありません。
+
+フェイクの `record_reading_completion` も、注入した失敗と現在状態の検査を保存前に終え、成功するときだけ本とメモの両方を更新します。SQLite と同じ transaction 機構をまねるのではなく、呼び出し側が観測する原子性を同じにします。
 
 2 つの Adapter から確認できることは異なります。
 

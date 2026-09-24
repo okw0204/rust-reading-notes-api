@@ -53,6 +53,8 @@ pub(crate) trait BookRepository: Send + Sync {
     ) -> impl Future<Output = Result<StoredBook, AppError>> + Send;
 
     /// 読書中の本を読了へ進め、メモとともに一つの保存単位で確定します。
+    /// 現在状態が読書中でなければ Conflict とし、状態とメモのどちらも変更しません。
+    /// 依存先の失敗時も transaction を rollback し、片方だけを残しません。
     fn record_reading_completion(
         &self,
         book: Book<Finished>,

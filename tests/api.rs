@@ -803,3 +803,181 @@ async fn rejects_the_entire_completion_request_before_saving_any_item() {
         assert_eq!(detail["notes"], json!([]));
     }
 }
+
+#[tokio::test]
+async fn returns_item_failures_without_rolling_back_independent_successes() {
+    let app = test_app().await;
+    for (title, status) in [
+        ("Successful completion", Some("reading")),
+        ("Conflicting completion", None),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/books",
+                json!({"title": title, "author": "Author"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+
+        if let Some(status) = status {
+            let response = app
+                .clone()
+                .oneshot(json_request(
+                    "PATCH",
+                    "/books/1/status",
+                    json!({"status": status}),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+    }
+
+    let response = app
+        .clone()
+        .oneshot(json_request(
+            "POST",
+            "/reading-completions",
+            json!({
+                "items": [
+                    {"book_id": 999, "body": "存在しない本"},
+                    {"book_id": 2, "body": "読書中ではない本"},
+                    {"book_id": 1, "body": "独立して成功する本"}
+                ]
+            }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        json_body(response).await,
+        json!({
+            "results": [
+                {
+                    "book_id": 999,
+                    "outcome": "failed",
+                    "error": {
+                        "code": "not_found",
+                        "message": "resource not found"
+                    }
+                },
+                {
+                    "book_id": 2,
+                    "outcome": "failed",
+                    "error": {
+                        "code": "conflict",
+                        "message": "reading state conflict"
+                    }
+                },
+                {
+                    "book_id": 1,
+                    "outcome": "completed",
+                    "book": {
+                        "id": 1,
+                        "title": "Successful completion",
+                        "author": "Author",
+                        "status": "finished"
+                    },
+                    "note": {"id": 1, "body": "独立して成功する本"}
+                }
+            ]
+        })
+    );
+
+    for (book_id, status, notes) in [
+        (
+            1,
+            "finished",
+            json!([{"id": 1, "body": "独立して成功する本"}]),
+        ),
+        (2, "want_to_read", json!([])),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/books/{book_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let detail = json_body(response).await;
+        assert_eq!(detail["status"], status);
+        assert_eq!(detail["notes"], notes);
+    }
+}
+
+#[tokio::test]
+async fn rolls_back_a_completion_when_adding_its_note_fails() {
+    let (app, pool) = test_app_and_pool().await;
+    let response = app
+        .clone()
+        .oneshot(json_request(
+            "POST",
+            "/books",
+            json!({"title": "Rollback", "author": "Author"}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let response = app
+        .clone()
+        .oneshot(json_request(
+            "PATCH",
+            "/books/1/status",
+            json!({"status": "reading"}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    sqlx::query(
+        "CREATE TRIGGER fail_completion_note
+         BEFORE INSERT ON notes
+         BEGIN
+             SELECT RAISE(ABORT, 'injected note failure');
+         END",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let response = app
+        .clone()
+        .oneshot(json_request(
+            "POST",
+            "/reading-completions",
+            json!({"items": [{"book_id": 1, "body": "保存されないメモ"}]}),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        json_body(response).await,
+        json!({
+            "results": [{
+                "book_id": 1,
+                "outcome": "failed",
+                "error": {
+                    "code": "internal_error",
+                    "message": "internal server error"
+                }
+            }]
+        })
+    );
+
+    let response = app
+        .oneshot(Request::get("/books/1").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let detail = json_body(response).await;
+    assert_eq!(detail["status"], "reading");
+    assert_eq!(detail["notes"], json!([]));
+}

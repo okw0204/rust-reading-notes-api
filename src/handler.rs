@@ -13,8 +13,8 @@ use crate::{
     error::AppError,
     repository::BookRepository,
     service::{
-        AddNote, CompletedReading, CreateBook, RecordReadingCompletion, RecordReadingCompletions,
-        UpdateStatus,
+        AddNote, CompletedReading, CreateBook, ReadingCompletionFailure, ReadingCompletionResult,
+        RecordReadingCompletion, RecordReadingCompletions, UpdateStatus,
     },
 };
 
@@ -86,6 +86,16 @@ enum ReadingCompletionResultResponse {
         book: BookResponse,
         note: NoteResponse,
     },
+    Failed {
+        book_id: BookId,
+        error: ReadingCompletionErrorResponse,
+    },
+}
+
+#[derive(Serialize)]
+struct ReadingCompletionErrorResponse {
+    code: &'static str,
+    message: &'static str,
 }
 
 impl From<StoredBook> for BookResponse {
@@ -126,6 +136,31 @@ impl From<CompletedReading> for ReadingCompletionResultResponse {
             book_id: completion.book.id(),
             book: completion.book.into(),
             note: completion.note.into(),
+        }
+    }
+}
+
+impl From<ReadingCompletionResult> for ReadingCompletionResultResponse {
+    fn from(result: ReadingCompletionResult) -> Self {
+        match result {
+            ReadingCompletionResult::Completed(completion) => completion.into(),
+            ReadingCompletionResult::Failed { book_id, error } => {
+                let error = match error {
+                    ReadingCompletionFailure::NotFound => ReadingCompletionErrorResponse {
+                        code: "not_found",
+                        message: "resource not found",
+                    },
+                    ReadingCompletionFailure::Conflict => ReadingCompletionErrorResponse {
+                        code: "conflict",
+                        message: "reading state conflict",
+                    },
+                    ReadingCompletionFailure::Internal => ReadingCompletionErrorResponse {
+                        code: "internal_error",
+                        message: "internal server error",
+                    },
+                };
+                Self::Failed { book_id, error }
+            }
         }
     }
 }

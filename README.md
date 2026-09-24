@@ -40,7 +40,7 @@ Markdown 原文ではソースの `include` や Mermaid の図が生成 HTML と
 | 部 | 内容と入口 |
 | --- | --- |
 | 第 1 部：値と関数 | [値を受け取る関数](docs/book/01-values/values-and-functions.md)、[一括読了記録の入力](docs/book/01-values/reading-completion-input.md)、所有権の移動、部分的な移動、借用、`Clone`、`Result` と `?` |
-| 第 2 部：型と状態 | [検証済みの値型](docs/book/02-types/validated-values.md)、`Book<S>` の型状態、DB の実行時状態との境界 |
+| 第 2 部：型と状態 | [検証済みの値型](docs/book/02-types/validated-values.md)、`Book<S>` の型状態、DB の実行時状態、[失敗後の保存結果](docs/book/02-types/completion-failures.md) |
 | 第 3 部：型を抽象化する | [repository trait](docs/book/03-abstraction/repository-trait.md)、ジェネリックな service、具体的な Adapter |
 | 第 4 部：非同期と共有 | [Future の借用](docs/book/04-async/async-bounds.md)、`Send`・`Sync`・`'static`・`Arc` |
 | 第 5 部：全体を読み直す | [状態変更の端から端の流れ](docs/book/05-flow/status-update.md)、service のフェイク、SQLite の条件付き更新、Router の HTTP 統合テスト |
@@ -104,9 +104,11 @@ curl -i -X DELETE http://127.0.0.1:3000/books/1
 | `reading`（読書中） | `409` | `409` | `200` |
 | `finished`（読了） | `409` | `409` | `409` |
 
-一括読了記録は、重複しない 1 件以上 8 件以下の `book_id` と、空でない `body` を受け取ります。要求全体を保存前に検証し、正常系では `results` に読了済みの本とメモを入力順で返します。一冊の読書状態とメモは同じ transaction で保存します。
+一括読了記録は、重複しない 1 件以上 8 件以下の `book_id` と、空でない `body` を受け取ります。要求全体を保存前に検証し、不正なら `400 Bad Request` としてどの本も変更しません。入力全体が正しければ、各項目の `outcome` を入力順で `results` に返し、一部または全部が失敗しても要求は `200 OK` です。
 
-認識できない状態名や空白だけの入力は `400 Bad Request` です。対象取得時の未検出は `404 Not Found`、取得後の条件付き更新が成立しない場合は途中の削除も含め `409 Conflict` です。保存値の不正や DB エラーは内部詳細を隠して `500 Internal Server Error` に変換します。
+一冊の未検出は `not_found`、読書状態の不整合は `conflict`、保存値の不正や DB エラーは内部詳細を隠した `internal_error` として、その項目の `error` に入ります。一冊の読書状態とメモは同じ transaction で保存し、失敗時はどちらも残しません。別の本ですでに確定した読了記録は取り消しません。
+
+一括読了記録以外では、対象取得時の未検出は `404 Not Found`、条件付き更新が成立しない場合は `409 Conflict`、保存値の不正や DB エラーは `500 Internal Server Error` です。
 
 アプリケーションのエラーは次の JSON 形式です。
 
