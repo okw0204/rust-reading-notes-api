@@ -129,9 +129,9 @@ stateDiagram-v2
 {{#include ../../../src/test_support.rs:attempt_drop_guard}}
 ```
 
-1. `finish` は保存が成功したときに `finished` フラグを立てます。
-2. `impl Drop for ReadingCompletionAttempt` は、フラグが立っていないときだけ `mark_dropped` を呼びます。
-3. したがって `dropped` に入った本は、完了せずに破棄されたと分かります。フェイクは正規の完了と途中の破棄を区別して記録できます。
+1. `finish` は、フェイクの読了記録が成功または失敗の `Result` を返すところまで到達したときに `finished` フラグを立てます。保存成功を表すフラグではありません。
+2. `impl Drop for ReadingCompletionAttempt` は、結果を返す前に処理が破棄され、フラグが立っていないときだけ `mark_dropped` を呼びます。
+3. したがって `finished` は結果を返した処理、`dropped` は途中で破棄された処理を記録します。保存の成否は `ReadingCompletionResult` と再取得した保存状態で別に確認します。
 
 最終的な保存状態は、一冊目が読了してメモあり、二冊目が読書中でメモなしです。
 

@@ -55,7 +55,7 @@
 - `!(1..=8).contains(&input.items.len())` は、一括読了記録の件数を 1 件以上 8 件以下に制限します。範囲外は `AppError::Validation` を返します。
 - `HashSet::with_capacity` と `Vec::with_capacity` は、件数ぶんの領域を先に確保します。件数はすでに 8 以下と分かっているので、追加時の再確保を避けられます。
 - `for item in input.items` は `Vec` を消費して各要素を値で取り出します。`seen_book_ids.insert(item.book_id.0)` は `BookId` の内部値で重複を調べ、すでにあれば `false` を返すので、同じ要求内の重複を拒否します。
-- 重複がなければ `NoteBody::try_from(item.body)?` で本文の `String` を検証済みの型へ移し、`(book_id, NoteBody)` を `validated` に積みます。`?` が `InvalidText` を `AppError::Validation` へ変え、失敗時はここで早期 return します。
+- 重複がなければ、`NoteBody::try_from(item.body)?` が本文の `String` を `normalize` へ移して検証します。成功時は、trim 後の範囲から新しく確保した `String` を所有する `NoteBody` と `book_id` の組を `validated` に積みます。`?` が `InvalidText` を `AppError::Validation` へ変え、失敗時はここで早期 return します。
 
 `validated` が完成するまで repository は一度も呼ばれません。先頭の項目を保存してから後続の空本文を見つける形では、`400 Bad Request` を返した要求の一部だけが残り、応答と保存状態が食い違います。要求全体の入力規則は、保存処理を一つでも始める前に確定させます。
 
@@ -71,7 +71,7 @@
 
 - 引数 `value: String` は本文を値で受け取り、normalize がその所有権を持ちます。
 - `value.trim()` は前後の空白を除いた範囲を指す `&str` を返し、元の `String` を借用するだけです。ここでは新しい文字列を確保しません。
-- 空なら `&'static str` のメッセージを持つ `InvalidText` を返します。この分岐では確保も本文の移動も起きません。
+- 空なら `&'static str` のメッセージを持つ `InvalidText` を返します。この分岐では新しい文字列を確保せず、引数として受け取った元の `String` は `normalize` を抜けるときに破棄されます。
 - 空でなければ `value.to_owned()` で trim 後の範囲から新しい `String` を一度だけ作り、その所有権を返します。trim の借用をそのまま返すと元の `String` の寿命に縛られるため、独立して生存できる所有値へ切り替えます。
 
 対象: `src/domain/text.rs` / `TryFrom<String> for NoteBody` と `NoteBody`
@@ -81,7 +81,7 @@
 ```
 
 - `TryFrom<String>` は `String` を値で受け取り、`normalize(value, "note body must not be empty")` の結果へ `map(Self)` します。成功時は `NoteBody` が正規化済みの `String` を所有し、失敗時は `InvalidText` です。
-- service の `NoteBody::try_from(item.body)?` はこの実装を呼びます。`item.body` の所有権は検証と同時に `NoteBody` へ移り、以降は HTTP DTO とは独立した値として扱えます。
+- service の `NoteBody::try_from(item.body)?` はこの実装を呼びます。`item.body` の `String` はまず `normalize` へ移り、`trim()` がその中の範囲を借ります。成功時は `to_owned()` が trim 後の範囲から別の `String` を新しく作り、`NoteBody` はその新しい文字列を所有します。元の `String` は `normalize` の終了時に破棄されます。
 - `as_str(&self) -> &str` は内部の `String` を借用して貸します。repository が SQL へ bind するときはこの参照を使います。
 - `into_inner(self) -> String` は値を消費して内部の `String` を取り出します。応答へ本文を返すときなど、所有権ごと外へ出す場面で使います。
 
@@ -125,7 +125,7 @@
 
 ### HTTP DTO の `String` を最後まで使う
 
-型の数は減りますが、どこから空でない本文を前提にしてよいか分からなくなります。検証後だけ作れる `NoteBody` へ所有権を移すことで、repository は空本文の検査を繰り返さずに済みます。
+型の数は減りますが、どこから空でない本文を前提にしてよいか分からなくなります。検証後だけ作れる `NoteBody` が正規化後に新しく確保した `String` を所有することで、repository は空本文の検査を繰り返さずに済みます。
 
 ### 要求全体を clone して検証用と保存用に分ける
 
@@ -141,7 +141,7 @@
 
 ## 解答
 
-1. `ReadingCompletionItemRequest` が `String` を所有し、handler の `into_iter()` が各 DTO を service の入力へ移します。service は `NoteBody::try_from` へ `body` の所有権を移し、成功した `NoteBody` が正規化済みの本文を所有します。clone は行いません。
+1. `ReadingCompletionItemRequest` が `String` を所有し、handler の `into_iter()` が各 DTO を service の入力へ移します。service は `body` を `NoteBody::try_from` へ移し、`normalize` が trim 後の範囲から新しい `String` を作ります。成功した `NoteBody` はこの正規化済みの文字列を所有し、元の `String` は破棄されます。
 2. `into_iter()` は `Vec` を消費して各要素を取り出し、クロージャが DTO を service の入力型へ詰め替え、`book_id` は `Copy` でコピー、`body` は移動し、`collect()` が走査して一覧を組み立てます。
 3. service が全項目を走査して `validated` を完成させたあとにだけ repository を呼ぶためです。途中で `?` が失敗すると保存ループへ到達しません。
 4. `normalize` が返す `InvalidText` を `?` が `AppError::Validation` へ変え、`error.rs` の `IntoResponse` が `400 Bad Request` と `validation_error` に変換します。
