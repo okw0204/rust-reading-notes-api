@@ -14,7 +14,7 @@ use crate::{
     service::ReadingService,
 };
 
-// ANCHOR: composition
+// ANCHOR: app_state
 pub(crate) struct AppState<R> {
     // Arc は service の共有所有、repository 内の pool は DB 接続の共有を担う。
     pub(crate) service: Arc<ReadingService<R>>,
@@ -27,7 +27,9 @@ impl<R> Clone for AppState<R> {
         }
     }
 }
+// ANCHOR_END: app_state
 
+// ANCHOR: app_build
 /// SQLite Adapter を使う production と統合テスト向けの Router を構築します。
 pub fn build_app(pool: SqlitePool) -> Router {
     build_app_with_repository(SqliteBookRepository::new(pool))
@@ -41,6 +43,7 @@ where
     let state = AppState {
         service: Arc::new(ReadingService::new(repository)),
     };
+    // ANCHOR_END: app_build
     Router::new()
         .route(
             "/books",
@@ -58,14 +61,14 @@ where
             "/books/{id}/notes",
             axum::routing::post(handler::add_note::<R>),
         )
+        // ANCHOR: completion_route
         .route(
             "/reading-completions",
             axum::routing::post(handler::record_reading_completions::<R>),
         )
+        // ANCHOR_END: completion_route
         .with_state(state)
 }
-
-// ANCHOR_END: composition
 
 /// SQLite へ接続し、未適用の migration を実行します。
 pub async fn connect_database(url: &str) -> Result<SqlitePool, Box<dyn Error>> {

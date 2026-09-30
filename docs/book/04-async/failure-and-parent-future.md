@@ -10,11 +10,11 @@
 
 ## 読む場所と順序
 
-1. `src/service.rs` の `ReadingService::record_reading_completions` にある子 Future のエラー変換。
-2. 同じメソッドの `FuturesUnordered` と結果収集。
-3. `src/test_support.rs` の `ReadingCompletionControl` と `FakeBookRepository::record_reading_completion`。
-4. `src/service/tests.rs` の `continues_other_completions_after_one_fails`。
-5. 同じファイルの `dropping_parent_future_stops_pending_completions_and_keeps_saved_results`。
+1. [一件の失敗を一件の結果へ変える](#一件の失敗を一件の結果へ変える) で子 Future の `match` と `From` 変換。
+2. [親 Future が子 Future を所有する](#親-future-が子-future-を所有する) で破棄の連鎖と二つのテスト。
+3. [処理の終了と rollback は範囲が違う](#処理の終了と-rollback-は範囲が違う) で確定済みの commit と未確定の transaction。
+
+## 解説
 
 ```mermaid
 sequenceDiagram
@@ -31,19 +31,54 @@ sequenceDiagram
     Note over Parent,Second: 一件の失敗で集合全体を終了しない
 ```
 
-## 解説
-
 ### 一件の失敗を一件の結果へ変える
 
+対象: `src/service.rs` / `ReadingService::record_reading_completions`
+
 ```rust,ignore
-{{#include ../../../src/service.rs:reading_completions_concurrency}}
+{{#include ../../../src/service.rs:reading_completions_child}}
 ```
 
-一冊分の子 Future は、`record_reading_completion` の `Result` を待ちます。成功なら `ReadingCompletionResult::Completed`、失敗なら同じ `book_id` を持つ `ReadingCompletionResult::Failed` へ変換します。ここでは `?` で親 Future から早期 return しません。
+1. `match self.record_reading_completion(book_id, &body).await { ... }` は、repository まで含めた一冊の結果を待ち、`Result` の二つの枝へ分けます。
+2. `Ok(completion)` の枝は `ReadingCompletionResult::Completed(completion)` を作ります。
+3. `Err(error)` の枝は、同じ `book_id` を持つ `ReadingCompletionResult::Failed` を作ります。`book_id` は値で持っているので、ここでもそのまま移せます。
+4. `error: error.into()` は `From` 変換を呼びます。ここでは `?` を使わないため、失敗しても親 Future から早期 return しません。
+5. どちらの枝でも `(position, result)` を返すので、結果は一件分の値として `FuturesUnordered` へ戻ります。
 
-失敗も一件分の値になって `(position, result)` として `FuturesUnordered` へ戻るため、親 Future は残りの子 Future を保持したまま `pending.next().await` を続けます。全件が成功することではなく、入力した全件について成功または失敗を返すことが一括読了記録の契約です。
+対象: `src/service.rs` / `ReadingCompletionFailure`
 
-`continues_other_completions_after_one_fails` は、制御可能なフェイクで二冊の保存開始を確認してから、一冊目だけに DB エラーを返します。その失敗が `internal_error` になったあとで二冊目を解放し、二冊目が読了してメモも残ることを確認します。一冊目は読書中のままで、メモも残りません。待ち時間や scheduler の偶然には依存しません。
+```rust,ignore
+{{#include ../../../src/service.rs:reading_completion_failures}}
+```
+
+1. `ReadingCompletionResult::Failed` は、どの本か (`book_id`) と、失敗の種類 (`ReadingCompletionFailure`) を持ちます。
+2. `impl From<AppError> for ReadingCompletionFailure` は、`NotFound` と `Conflict` を同じ名前の variant へ、`Database`、`InvalidStoredValue`、`Validation` をログ付きで `Internal` へ畳みます。
+3. `error.into()` の `into` はこの `From` 実装を選びます。呼び出し側は `AppError` ごとの分岐を書かずに済みます。
+
+失敗も一件分の値になって `(position, result)` として集合へ戻るため、親 Future は残りの子 Future を保持したまま `pending.next().await` を続けます。全件が成功することではなく、入力した全件について成功または失敗を返すことが一括読了記録の契約です。
+
+対象: `src/service/tests.rs` / `continues_other_completions_after_one_fails`
+
+```rust,ignore
+{{#include ../../../src/service/tests.rs:failure_continues_drive}}
+```
+
+1. `control.wait_for_started(2).await` で二冊の開始を待ちます。
+2. `control.release(first.id())` で一冊目だけを進め、`wait_for_finished(1)` でその完了を待ちます。
+3. `assert_eq!(control.finished(), vec![first.id()])` は、一冊目だけが完了したことを確かめます。
+4. `control.release(second.id())` で二冊目を解放し、失敗が続行を止めないことを観測できるようにします。
+
+対象: `src/service/tests.rs` / `continues_other_completions_after_one_fails`
+
+```rust,ignore
+{{#include ../../../src/service/tests.rs:failure_result_assert}}
+```
+
+1. `results[0]` は先頭の本の結果です。`matches!` は variant とガードをまとめて確かめるマクロで、`ReadingCompletionResult::Failed` かつ `error` が `Internal` かつ `book_id` が一冊目であることを確認します。
+2. `results[1]` は二冊目の結果で、`Completed` であることを確認します。
+3. 失敗が一件分の値になっているので、入力順の並べ替えはそのまま働きます。
+
+このテストは、制御可能なフェイクで二冊の保存開始を確認してから、一冊目だけに DB エラーを返します。その失敗が `ReadingCompletionFailure::Internal` として一件分の結果になったあとで二冊目を解放し、二冊目が読了してメモも残ることを確認します。一冊目は読書中のままで、メモも残りません。待ち時間や scheduler の偶然には依存しません。
 
 ### 親 Future が子 Future を所有する
 
@@ -67,7 +102,38 @@ stateDiagram-v2
     Dropped --> Stopped
 ```
 
-`dropping_parent_future_stops_pending_completions_and_keeps_saved_results` は、二冊とも保存処理へ入ったあと、一冊目だけを解放して保存を完了させます。二冊目が待機している状態で親 Future を破棄し、フェイクの drop guard から未完了の保存処理も破棄されたことを確認します。最終的な保存状態は、一冊目が読了してメモあり、二冊目が読書中でメモなしです。
+対象: `src/service/tests.rs` / `dropping_parent_future_stops_pending_completions_and_keeps_saved_results`
+
+```rust,ignore
+{{#include ../../../src/service/tests.rs:parent_drop_select}}
+```
+
+1. `tokio::pin!(run)` は Future をスタック上で固定し、`&mut run` で poll できるようにします。
+2. `tokio::select!` は複数の Future を同時に待ち、先に完了した枝を選びます。
+3. `_ = &mut run => panic!(...)` の枝は、親 Future がこの時点で完了したら失敗させます。二冊目が待機中なので完了しないはずです。
+4. もう一方の枝は、二冊の開始を待って一冊目を解放し、その完了を待ちます。この枝が先に完了すると、`select!` はまだ完了していない `run` を poll 対象から外して抜けます。
+5. `select!` を抜けた時点で `run` はスコープを離れ、親 Future と、その内側の未完了の子 Future が破棄されます。
+
+対象: `src/service/tests.rs` / `dropping_parent_future_stops_pending_completions_and_keeps_saved_results`
+
+```rust,ignore
+{{#include ../../../src/service/tests.rs:parent_drop_assert}}
+```
+
+1. `control.finished()` が一冊目だけなのは、一冊目が親の破棄前に保存を完了したためです。
+2. `control.dropped()` が二冊目なのは、二冊目の子 Future が完了せずに破棄されたためです。
+
+対象: `src/test_support.rs` / `ReadingCompletionAttempt`
+
+```rust,ignore
+{{#include ../../../src/test_support.rs:attempt_drop_guard}}
+```
+
+1. `finish` は、フェイクの読了記録が成功または失敗の `Result` を返すところまで到達したときに `finished` フラグを立てます。保存成功を表すフラグではありません。
+2. `impl Drop for ReadingCompletionAttempt` は、結果を返す前に処理が破棄され、フラグが立っていないときだけ `mark_dropped` を呼びます。
+3. したがって `finished` は結果を返した処理、`dropped` は途中で破棄された処理を記録します。保存の成否は `ReadingCompletionResult` と再取得した保存状態で別に確認します。
+
+最終的な保存状態は、一冊目が読了してメモあり、二冊目が読書中でメモなしです。
 
 ### 処理の終了と rollback は範囲が違う
 
@@ -94,19 +160,21 @@ stateDiagram-v2
 ## 確認
 
 1. 一冊の失敗後も `FuturesUnordered` がほかの子 Future を保持し続けるのはなぜですか。
-2. 親 Future を破棄すると、待機中の子 Future はどうなりますか。
-3. 親 Future の破棄前に commit 済みの読了記録が残るのはなぜですか。
-4. Future の破棄と transaction の rollback は、どの範囲が違いますか。
-5. 二つの service テストは、失敗後の継続と親 Future の終了をどう決定的に再現しますか。
-6. 親の終了後も処理を続けたい場合、`tokio::spawn` の追加だけでは足りないのはなぜですか。
+2. `error.into()` は、どの型からどの型への変換を呼びますか。
+3. 親 Future を破棄すると、待機中の子 Future はどうなりますか。
+4. 親 Future の破棄前に commit 済みの読了記録が残るのはなぜですか。
+5. Future の破棄と transaction の rollback は、どの範囲が違いますか。
+6. 二つの service テストは、失敗後の継続と親 Future の終了をどう決定的に再現しますか。
+7. 親の終了後も処理を続けたい場合、`tokio::spawn` の追加だけでは足りないのはなぜですか。
 
 ## 解答
 
 1. 各子 Future が失敗を親全体の `Err` ではなく一件分の `ReadingCompletionResult::Failed` へ変換し、親 Future が `pending.next().await` を続けるためです。
-2. 親 Future が所有する `FuturesUnordered` とともに破棄され、それ以降は poll されません。切り離した task は残りません。
-3. 冊子間は一つの transaction ではなく、一冊ごとに独立して commit するためです。Future の破棄には、保存先へ確定した変更を巻き戻す効果はありません。
-4. Future の破棄は未完了処理を今後進めないことです。rollback は一冊の transaction 内で未確定の状態変更とメモ追加を両方とも保存しないことです。
-5. 一冊ごとの待機点を持つフェイクで、開始、失敗、成功、親 Future の破棄をテスト側から順番に起こします。実時間の短さや偶然の完了順は使いません。
-6. task の所有者、終了後の処理状態を取得する Interface、shutdown、再試行、HTTP 応答との関係も必要になるためです。
+2. `AppError` から `ReadingCompletionFailure` への変換です。`impl From<AppError> for ReadingCompletionFailure` が選ばれ、依存先の失敗は `Internal` へ畳まれます。
+3. 親 Future が所有する `FuturesUnordered` とともに破棄され、それ以降は poll されません。切り離した task は残りません。
+4. 冊子間は一つの transaction ではなく、一冊ごとに独立して commit するためです。Future の破棄には、保存先へ確定した変更を巻き戻す効果はありません。
+5. Future の破棄は未完了処理を今後進めないことです。rollback は一冊の transaction 内で未確定の状態変更とメモ追加を両方とも保存しないことです。
+6. 一冊ごとの待機点を持つフェイクで、開始、失敗、成功、親 Future の破棄をテスト側から順番に起こします。実時間の短さや偶然の完了順は使いません。
+7. task の所有者、終了後の処理状態を取得する Interface、shutdown、再試行、HTTP 応答との関係も必要になるためです。
 
 次は[HTTP から SQLite まで](../05-flow/http-to-sqlite.md)で、利用者の要求から保存結果までを端から端へ読み直します。

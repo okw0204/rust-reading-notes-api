@@ -168,10 +168,11 @@ impl<R: BookRepository> ReadingService<R> {
         }
         // ANCHOR_END: reading_completions_validation
 
-        // ANCHOR: reading_completions_concurrency
+        // ANCHOR: reading_completions_pipeline
         let mut pending = validated
             .into_iter()
             .enumerate()
+            // ANCHOR: reading_completions_child
             .map(|(position, (book_id, body))| async move {
                 let result = match self.record_reading_completion(book_id, &body).await {
                     Ok(completion) => ReadingCompletionResult::Completed(completion),
@@ -182,22 +183,29 @@ impl<R: BookRepository> ReadingService<R> {
                 };
                 (position, result)
             })
+            // ANCHOR_END: reading_completions_child
             .collect::<FuturesUnordered<_>>();
+        // ANCHOR_END: reading_completions_pipeline
 
+        // ANCHOR: reading_completions_drain
         let mut results = Vec::with_capacity(pending.len());
         while let Some(result) = pending.next().await {
             results.push(result);
         }
+        // ANCHOR_END: reading_completions_drain
+        // ANCHOR: reading_completions_order
         results.sort_unstable_by_key(|(position, _)| *position);
         Ok(results.into_iter().map(|(_, result)| result).collect())
-        // ANCHOR_END: reading_completions_concurrency
+        // ANCHOR_END: reading_completions_order
     }
 
+    // ANCHOR: single_completion_future
     async fn record_reading_completion(
         &self,
         book_id: BookId,
         body: &NoteBody,
     ) -> Result<CompletedReading, AppError> {
+        // ANCHOR: reading_completion_match
         let current = self.repository.find_book(book_id).await?;
         let reading = match current {
             StoredBook::Reading(book) => book,
@@ -208,7 +216,9 @@ impl<R: BookRepository> ReadingService<R> {
             .record_reading_completion(reading.finish(), body)
             .await?;
         Ok(CompletedReading { book, note })
+        // ANCHOR_END: reading_completion_match
     }
+    // ANCHOR_END: single_completion_future
     // ANCHOR_END: reading_completions_service
 
     pub(crate) async fn delete_book(&self, book_id: BookId) -> Result<(), AppError> {

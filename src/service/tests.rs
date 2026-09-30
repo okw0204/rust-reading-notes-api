@@ -386,6 +386,7 @@ async fn advances_completions_concurrently_and_returns_results_in_input_order() 
             },
         ],
     });
+    // ANCHOR: completion_order_drive
     let drive = async {
         control.wait_for_started(2).await;
         assert!(control.finished().is_empty());
@@ -395,11 +396,13 @@ async fn advances_completions_concurrently_and_returns_results_in_input_order() 
         assert_eq!(control.finished(), vec![second.id()]);
         control.release(first.id());
     };
+    // ANCHOR_END: completion_order_drive
 
     let (results, ()) =
         tokio::time::timeout(Duration::from_secs(5), async { tokio::join!(run, drive) })
             .await
             .expect("both completions should start before either is released");
+    // ANCHOR: input_order_assert
     let result_ids = results
         .unwrap()
         .into_iter()
@@ -411,6 +414,7 @@ async fn advances_completions_concurrently_and_returns_results_in_input_order() 
         })
         .collect::<Vec<_>>();
     assert_eq!(result_ids, vec![first.id(), second.id()]);
+    // ANCHOR_END: input_order_assert
 }
 
 #[tokio::test]
@@ -459,6 +463,7 @@ async fn continues_other_completions_after_one_fails() {
             },
         ],
     });
+    // ANCHOR: failure_continues_drive
     let drive = async {
         control.wait_for_started(2).await;
         control.release(first.id());
@@ -466,11 +471,13 @@ async fn continues_other_completions_after_one_fails() {
         assert_eq!(control.finished(), vec![first.id()]);
         control.release(second.id());
     };
+    // ANCHOR_END: failure_continues_drive
 
     let (results, ()) =
         tokio::time::timeout(Duration::from_secs(5), async { tokio::join!(run, drive) })
             .await
             .expect("the failure should not stop the other completion");
+    // ANCHOR: failure_result_assert
     let results = results.unwrap();
     assert!(matches!(
         &results[0],
@@ -484,6 +491,7 @@ async fn continues_other_completions_after_one_fails() {
         ReadingCompletionResult::Completed(completion)
             if completion.book.id() == second.id()
     ));
+    // ANCHOR_END: failure_result_assert
 
     let first_detail = service.get_book(first.id()).await.unwrap();
     assert_eq!(first_detail.book.status(), ReadingStatus::Reading);
@@ -540,6 +548,7 @@ async fn dropping_parent_future_stops_pending_completions_and_keeps_saved_result
                 },
             ],
         });
+        // ANCHOR: parent_drop_select
         tokio::pin!(run);
         tokio::select! {
             _ = &mut run => panic!("the second completion is still waiting"),
@@ -549,12 +558,15 @@ async fn dropping_parent_future_stops_pending_completions_and_keeps_saved_result
                 control.wait_for_finished(1).await;
             } => {}
         }
+        // ANCHOR_END: parent_drop_select
     })
     .await
     .expect("the parent future should reach the controlled cancellation point");
 
+    // ANCHOR: parent_drop_assert
     assert_eq!(control.finished(), vec![first.id()]);
     assert_eq!(control.dropped(), vec![second.id()]);
+    // ANCHOR_END: parent_drop_assert
 
     let first_detail = service.get_book(first.id()).await.unwrap();
     assert_eq!(first_detail.book.status(), ReadingStatus::Finished);

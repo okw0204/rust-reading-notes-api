@@ -12,15 +12,18 @@ use crate::{
 mod sqlite;
 pub(crate) use sqlite::SqliteBookRepository;
 
-// ANCHOR: repository_contract
+// ANCHOR: trait_header
 /// 実装と返される Future をスレッド間で扱える永続化境界です。
 pub(crate) trait BookRepository: Send + Sync {
+    // ANCHOR_END: trait_header
+    // ANCHOR: insert_signature
     /// 検証済みのタイトルと著者で未読の本を登録し、採番済みの本を返します。
     fn insert_book(
         &self,
         title: &BookTitle,
         author: &Author,
     ) -> impl Future<Output = Result<StoredBook, AppError>> + Send;
+    // ANCHOR_END: insert_signature
 
     /// 指定状態で絞った本を ID 順に返します。指定なしは全件、該当なしは空です。
     fn list_books(
@@ -44,6 +47,7 @@ pub(crate) trait BookRepository: Send + Sync {
         body: &NoteBody,
     ) -> impl Future<Output = Result<Note, AppError>> + Send;
 
+    // ANCHOR: update_status_signature
     /// 現在状態が expected と一致する場合だけ、遷移済みの next の状態を保存します。
     /// 状態の不一致や取得後の削除は Conflict とし、保存内容を変更しません。
     fn update_book_status(
@@ -51,7 +55,9 @@ pub(crate) trait BookRepository: Send + Sync {
         expected: ReadingStatus,
         next: StoredBook,
     ) -> impl Future<Output = Result<StoredBook, AppError>> + Send;
+    // ANCHOR_END: update_status_signature
 
+    // ANCHOR: record_completion_contract
     /// 読書中の本を読了へ進め、メモとともに一つの保存単位で確定します。
     /// 現在状態が読書中でなければ Conflict とし、状態とメモのどちらも変更しません。
     /// 依存先の失敗時も transaction を rollback し、片方だけを残しません。
@@ -60,8 +66,8 @@ pub(crate) trait BookRepository: Send + Sync {
         book: Book<Finished>,
         body: &NoteBody,
     ) -> impl Future<Output = Result<(StoredBook, Note), AppError>> + Send;
+    // ANCHOR_END: record_completion_contract
 
     /// 本と対応するメモを削除します。本がなければ NotFound を返します。
     fn delete_book(&self, id: BookId) -> impl Future<Output = Result<(), AppError>> + Send;
 }
-// ANCHOR_END: repository_contract

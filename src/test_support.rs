@@ -14,12 +14,14 @@ use crate::{
     repository::BookRepository,
 };
 
-// ANCHOR: fake_state
+// ANCHOR: fake_struct
 #[derive(Clone, Default)]
 pub(crate) struct FakeBookRepository {
     state: Arc<Mutex<FakeState>>,
 }
+// ANCHOR_END: fake_struct
 
+// ANCHOR: fake_control_wrapper
 #[derive(Clone)]
 pub(crate) struct ReadingCompletionControl {
     inner: Arc<ReadingCompletionControlInner>,
@@ -30,7 +32,9 @@ struct ReadingCompletionAttempt {
     book_id: BookId,
     finished: bool,
 }
+// ANCHOR_END: fake_control_wrapper
 
+// ANCHOR: fake_control_state
 struct ReadingCompletionControlInner {
     gates: BTreeMap<i64, Arc<Semaphore>>,
     progress: Mutex<ReadingCompletionProgress>,
@@ -43,7 +47,9 @@ struct ReadingCompletionProgress {
     finished: Vec<BookId>,
     dropped: Vec<BookId>,
 }
+// ANCHOR_END: fake_control_state
 
+// ANCHOR: fake_state_fields
 #[derive(Default)]
 struct FakeState {
     books: BTreeMap<i64, StoredBook>,
@@ -54,7 +60,9 @@ struct FakeState {
     reading_completion_control: Option<ReadingCompletionControl>,
     reading_completion_errors: BTreeMap<i64, AppError>,
 }
+// ANCHOR_END: fake_state_fields
 
+// ANCHOR: fake_inject_errors
 impl FakeBookRepository {
     pub(crate) fn fail_next_update(&self, error: AppError) {
         self.state.lock().next_update_error = Some(error);
@@ -66,7 +74,9 @@ impl FakeBookRepository {
             .reading_completion_errors
             .insert(book_id.0, error);
     }
+    // ANCHOR_END: fake_inject_errors
 
+    // ANCHOR: fake_control_setup
     pub(crate) fn control_reading_completions(
         &self,
         book_ids: impl IntoIterator<Item = BookId>,
@@ -84,8 +94,10 @@ impl FakeBookRepository {
         self.state.lock().reading_completion_control = Some(control.clone());
         control
     }
+    // ANCHOR_END: fake_control_setup
 }
 impl ReadingCompletionControl {
+    // ANCHOR: completion_gate
     async fn wait_for_release(&self, book_id: BookId) {
         if let Some(gate) = self.inner.gates.get(&book_id.0) {
             gate.acquire()
@@ -94,6 +106,7 @@ impl ReadingCompletionControl {
                 .forget();
         }
     }
+    // ANCHOR_END: completion_gate
 
     fn start(&self, book_id: BookId) -> ReadingCompletionAttempt {
         self.mark_started(book_id);
@@ -119,6 +132,7 @@ impl ReadingCompletionControl {
         self.inner.changed.notify_waiters();
     }
 
+    // ANCHOR: fake_control_wait
     pub(crate) async fn wait_for_started(&self, count: usize) {
         loop {
             let changed = self.inner.changed.notified();
@@ -138,7 +152,10 @@ impl ReadingCompletionControl {
             changed.await;
         }
     }
+    // ANCHOR_END: fake_control_wait
 
+    // ANCHOR: fake_control_release
+    // ANCHOR: completion_release
     pub(crate) fn release(&self, book_id: BookId) {
         self.inner
             .gates
@@ -146,6 +163,7 @@ impl ReadingCompletionControl {
             .expect("controlled reading completion has a gate")
             .add_permits(1);
     }
+    // ANCHOR_END: completion_release
 
     pub(crate) fn finished(&self) -> Vec<BookId> {
         self.inner.progress.lock().finished.clone()
@@ -154,8 +172,10 @@ impl ReadingCompletionControl {
     pub(crate) fn dropped(&self) -> Vec<BookId> {
         self.inner.progress.lock().dropped.clone()
     }
+    // ANCHOR_END: fake_control_release
 }
 
+// ANCHOR: attempt_drop_guard
 impl ReadingCompletionAttempt {
     fn finish(mut self) {
         self.finished = true;
@@ -170,8 +190,7 @@ impl Drop for ReadingCompletionAttempt {
         }
     }
 }
-
-// ANCHOR_END: fake_state
+// ANCHOR_END: attempt_drop_guard
 
 // ロック中は小さなメモリ操作だけを行い、await を挟まない。
 impl BookRepository for FakeBookRepository {
@@ -245,6 +264,7 @@ impl BookRepository for FakeBookRepository {
 
     // ANCHOR_END: fake_update
 
+    // ANCHOR: fake_completion_gate
     async fn record_reading_completion(
         &self,
         book: Book<Finished>,
@@ -256,7 +276,9 @@ impl BookRepository for FakeBookRepository {
         if let Some(control) = &control {
             control.wait_for_release(book_id).await;
         }
+        // ANCHOR_END: fake_completion_gate
 
+        // ANCHOR: fake_completion_save
         let mut state = self.state.lock();
         let error = state
             .reading_completion_errors
@@ -286,6 +308,7 @@ impl BookRepository for FakeBookRepository {
             attempt.finish();
         }
         result
+        // ANCHOR_END: fake_completion_save
     }
 
     async fn delete_book(&self, id: BookId) -> Result<(), AppError> {
