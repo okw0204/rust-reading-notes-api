@@ -1,6 +1,5 @@
 //! 前後の空白を除去し、空でないことを構築時に保証する文字列型です。
 
-// ANCHOR: validated_title
 /// 検証済みの書名です。内部の文字列は直接変更できません。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BookTitle(String);
@@ -18,6 +17,7 @@ pub struct NoteBody(String);
 #[error("{0}")]
 pub struct InvalidText(&'static str);
 
+// ANCHOR: normalize_text
 fn normalize(value: String, message: &'static str) -> Result<String, InvalidText> {
     let value = value.trim();
     if value.is_empty() {
@@ -25,6 +25,7 @@ fn normalize(value: String, message: &'static str) -> Result<String, InvalidText
     }
     Ok(value.to_owned())
 }
+// ANCHOR_END: normalize_text
 
 impl TryFrom<String> for BookTitle {
     type Error = InvalidText;
@@ -46,8 +47,6 @@ impl BookTitle {
     }
 }
 
-// ANCHOR_END: validated_title
-
 impl TryFrom<String> for Author {
     type Error = InvalidText;
 
@@ -68,6 +67,7 @@ impl Author {
     }
 }
 
+// ANCHOR: note_body_conversion
 impl TryFrom<String> for NoteBody {
     type Error = InvalidText;
 
@@ -87,6 +87,7 @@ impl NoteBody {
         self.0
     }
 }
+// ANCHOR_END: note_body_conversion
 
 #[cfg(test)]
 mod tests {

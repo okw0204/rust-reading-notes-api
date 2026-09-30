@@ -11,6 +11,7 @@ use crate::{
     error::AppError,
 };
 
+// ANCHOR: book_row_struct
 #[derive(FromRow)]
 // SQLx が復元する DB 表現を、公開したいドメイン型から分離する。
 struct BookRow {
@@ -19,6 +20,7 @@ struct BookRow {
     author: String,
     status: String,
 }
+// ANCHOR_END: book_row_struct
 
 #[derive(FromRow)]
 struct NoteRow {

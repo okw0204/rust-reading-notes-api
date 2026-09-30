@@ -73,6 +73,7 @@ pub(crate) struct BookDetailResponse {
     notes: Vec<NoteResponse>,
 }
 
+// ANCHOR: completion_response_types
 #[derive(Serialize)]
 pub(crate) struct ReadingCompletionsResponse {
     results: Vec<ReadingCompletionResultResponse>,
@@ -97,7 +98,9 @@ struct ReadingCompletionErrorResponse {
     code: &'static str,
     message: &'static str,
 }
+// ANCHOR_END: completion_response_types
 
+// ANCHOR: book_response_conversion
 impl From<StoredBook> for BookResponse {
     fn from(book: StoredBook) -> Self {
         // DB 由来のドメイン型から、HTTP で公開する DTO へ所有権ごと移す。
@@ -110,6 +113,7 @@ impl From<StoredBook> for BookResponse {
         }
     }
 }
+// ANCHOR_END: book_response_conversion
 
 impl From<Note> for NoteResponse {
     fn from(note: Note) -> Self {
@@ -130,6 +134,7 @@ impl From<BookDetail> for BookDetailResponse {
     }
 }
 
+// ANCHOR: completion_success_response
 impl From<CompletedReading> for ReadingCompletionResultResponse {
     fn from(completion: CompletedReading) -> Self {
         Self::Completed {
@@ -139,7 +144,9 @@ impl From<CompletedReading> for ReadingCompletionResultResponse {
         }
     }
 }
+// ANCHOR_END: completion_success_response
 
+// ANCHOR: completion_result_response
 impl From<ReadingCompletionResult> for ReadingCompletionResultResponse {
     fn from(result: ReadingCompletionResult) -> Self {
         match result {
@@ -164,6 +171,7 @@ impl From<ReadingCompletionResult> for ReadingCompletionResultResponse {
         }
     }
 }
+// ANCHOR_END: completion_result_response
 
 // ANCHOR: create_book_handler
 pub(crate) async fn create_book<R: BookRepository>(
@@ -231,11 +239,13 @@ pub(crate) async fn update_status<R: BookRepository>(
 }
 // ANCHOR_END: update_status_handler
 
-// ANCHOR: reading_completions_handler
+// ANCHOR: completion_handler_signature
 pub(crate) async fn record_reading_completions<R: BookRepository>(
     State(state): State<AppState<R>>,
     Json(request): Json<ReadingCompletionsRequest>,
 ) -> Result<Json<ReadingCompletionsResponse>, AppError> {
+    // ANCHOR_END: completion_handler_signature
+    // ANCHOR: completion_handler_input
     let completions = state
         .service
         .record_reading_completions(RecordReadingCompletions {
@@ -249,15 +259,17 @@ pub(crate) async fn record_reading_completions<R: BookRepository>(
                 .collect(),
         })
         .await?;
+    // ANCHOR_END: completion_handler_input
 
+    // ANCHOR: completion_handler_response
     Ok(Json(ReadingCompletionsResponse {
         results: completions
             .into_iter()
             .map(ReadingCompletionResultResponse::from)
             .collect(),
     }))
+    // ANCHOR_END: completion_handler_response
 }
-// ANCHOR_END: reading_completions_handler
 
 pub(crate) async fn delete_book<R: BookRepository>(
     State(state): State<AppState<R>>,

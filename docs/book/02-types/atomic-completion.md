@@ -10,29 +10,54 @@
 
 ## 読む場所と順序
 
-1. `src/repository.rs` の `record_reading_completion` の契約。
-2. `src/service.rs` の一冊を処理する `record_reading_completion`。
-3. `src/repository/sqlite.rs` の `reading_completion_transaction`。
-4. `tests/api.rs` の `rolls_back_a_completion_when_adding_its_note_fails`。
-5. `migrations/0001_create_books_and_notes.sql`。
+この章の見出しを次の順で読みます。各見出しの直前に、対応する実コードの抜粋があります。
+
+1. [repository が約束する一冊の保存単位](#repository-が約束する一冊の保存単位): 呼び出し側が知る契約。
+2. [条件付き UPDATE と transaction](#条件付き-update-と-transaction): SQLx の呼び出しと確定手順。
+3. [失敗すると transaction 全体が rollback される](#失敗すると-transaction-全体が-rollback-される): `?` で抜けたときの保存状態。
+4. [冊子間は独立した保存単位](#冊子間は独立した保存単位): 一冊の原子性と部分成功の境界。
+5. [migration を追加しない理由](#migration-を追加しない理由): 既存の表で足りる根拠。
+
+## repository が約束する一冊の保存単位
+
+対象: `src/repository.rs` の `BookRepository::record_reading_completion`
+
+```rust,ignore
+{{#include ../../../src/repository.rs:record_completion_contract}}
+```
+
+doc コメントの 3 行が、このメソッドの契約そのものです。
+
+1. 「現在状態が読書中でなければ `Conflict`」: 保存先が読書中かを確認できない保存は拒否します。
+2. 「状態とメモのどちらも変更しない」: 片方だけが残る結果を許しません。
+3. 「依存先の失敗時も transaction を rollback し、片方だけを残しません」: DB 操作の途中失敗も同じ扱いです。
+
+シグネチャは `book: Book<Finished>` と `body: &NoteBody` を受け、`Result<(StoredBook, Note), AppError>` を返します。呼び出し側はこの契約だけを知ればよく、transaction や SQL は Adapter の中に隠れます。
+
+## 条件付き UPDATE と transaction
+
+対象: `src/repository/sqlite.rs` の `SqliteBookRepository::record_reading_completion`
 
 ```rust,ignore
 {{#include ../../../src/repository/sqlite.rs:reading_completion_transaction}}
 ```
 
-## 解説
+処理を順に追います。
 
-一冊の読了記録は次の順で進みます。
+1. `self.pool.begin().await?` で transaction を開始します。以後の SQL は `&mut *transaction` 上で実行し、確定するまで他の接続からは見えません。
+2. `StoredBook::Finished(book)` は、受け取った `Book<Finished>` を enum に包みます。`id()` や `status()` を使うためです。
+3. 1 つ目の `sqlx::query_as::<_, BookRow>("UPDATE ...")` は SQL 文と、`RETURNING` で返る行の型 `BookRow` を指定します。
+4. `.bind(finished.id().0)` は SQL の `?` へ値を順に対応付けます。SQL は `SET status = 'finished' WHERE id = ? AND status = 'reading'` で、現在状態が読書中の行だけを更新します。
+5. `.fetch_optional(&mut *transaction)` は 0 行または 1 行を `Option<BookRow>` で返します。`.ok_or(AppError::Conflict)?` は行が無ければ競合として関数を抜けます。取得後に別の要求が状態を変えた場合も、削除した場合も同じです。
+6. 2 つ目の `query_as` はメモを同じ transaction 上で `INSERT` します。`.bind(finished.id().0)` と `.bind(body.as_str())` を渡し、`.fetch_one` は 1 行を必須とします。
+7. `book_row.try_into()?` と `note_row.try_into()?` は、前章の変換で検証済みの `StoredBook` と `Note` へ復元します。
+8. `transaction.commit().await?` で両方を確定し、`Ok((saved_book, note))` を返します。
 
-1. transaction を開始する。
-2. `id` が一致し、現在状態が `reading` の本だけを `finished` へ更新する。
-3. 同じ transaction でメモを追加する。
-4. DB 行を検証済みの型へ復元する。
-5. transaction を commit する。
+条件付き UPDATE が行を返さなければ `Conflict` です。条件付き `UPDATE` は、型状態では知りえない保存先の現在状態を再検査する役割を持ちます。
 
-条件付き `UPDATE` が行を返さなければ `Conflict` です。取得後に別の要求が状態を変えた場合も、削除した場合も、読書中という保存の前提が崩れています。
+## 失敗すると transaction 全体が rollback される
 
-メモ追加や行変換、commit が失敗して `?` で戻ると、未確定の transaction は rollback されます。そのため「読了状態だけ」「メモだけ」という半端な読了記録を残しません。
+メモ追加、行の変換、commit のどれかが `Err` になると、`?` が関数を途中で抜けます。`commit()` の前に transaction が破棄されると、SQLite の未確定の変更は rollback されます。そのため「読了状態だけ」「メモだけ」という半端な読了記録を残しません。
 
 ```mermaid
 stateDiagram-v2
@@ -44,7 +69,13 @@ stateDiagram-v2
     WithNote --> Reading: failure / rollback
 ```
 
-冊子間は同じ transaction に入れません。ある本の競合や DB エラーは、その一冊を失敗にしますが、別の本ですでに commit した読了記録を取り消しません。
+テストの `rolls_back_a_completion_when_adding_its_note_fails` は、`notes` への `INSERT` を必ず拒否する trigger をテスト内で作ります。待ち時間や実行順に依存せず、状態更新のあとのメモ保存だけを決定的に失敗させ、rollback 後の保存状態を観測します。
+
+## 冊子間は独立した保存単位
+
+一冊の原子性はこの repository の一つの transaction が担います。冊子間は、service が一冊ごとに独立した子 Future を進め、それぞれの transaction を commit することで切り離します。ある本の競合や DB エラーはその一冊を失敗にしますが、別の本ですでに commit した読了記録を取り消しません。この分け方は次章 [失敗後に何が残るか](completion-failures.md) で結果へ対応付けます。
+
+## migration を追加しない理由
 
 既存の `books` と `notes` の表、列、制約をそのまま使います。一括読了記録は新しい永続エンティティではなく、既存の状態変更とメモ追加を一緒に成立させる操作です。この完成形では migration を追加せず、既存データを削除しません。
 

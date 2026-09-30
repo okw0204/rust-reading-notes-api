@@ -12,20 +12,28 @@
 
 ## 読む場所と順序
 
-1. `src/service.rs` の `ReadingCompletionResult`、`ReadingCompletionFailure`、`From<AppError>`。
-2. 同ファイルの `ReadingService::record_reading_completions` と、一冊を処理する `record_reading_completion`。
-3. `src/handler.rs` の `ReadingCompletionResultResponse` と `From<ReadingCompletionResult>`。
-4. `src/repository.rs` の `record_reading_completion` の契約。
-5. `src/repository/sqlite.rs` の `record_reading_completion`。
-6. `tests/api.rs` の `returns_item_failures_without_rolling_back_independent_successes`、`rolls_back_a_completion_when_adding_its_note_fails`、`rejects_the_entire_completion_request_before_saving_any_item`。
+この章の見出しを次の順で読みます。各見出しの直前に、対応する実コードの抜粋があります。
+
+1. [要求全体の失敗と一冊の失敗を分ける](#要求全体の失敗と一冊の失敗を分ける): service の結果型と `AppError` の変換。
+2. [読了結果を HTTP の outcome へ変換する](#読了結果を-http-の-outcome-へ変換する): handler の enum と `code`/`message`。
+3. [一冊の中では片方だけを残さない](#一冊の中では片方だけを残さない): transaction の範囲。
+4. [テストから保存状態を読む](#テストから保存状態を読む): 入力順、rollback、全体拒否の観測。
 
 ## 要求全体の失敗と一冊の失敗を分ける
+
+`record_reading_completions` の返り値は `Result<Vec<ReadingCompletionResult>, AppError>` です。外側の `Result` と内側の `ReadingCompletionResult` は、失敗する範囲が異なります。
+
+対象: `src/service.rs` の `ReadingCompletionResult` と `ReadingCompletionFailure`
 
 ```rust,ignore
 {{#include ../../../src/service.rs:reading_completion_failures}}
 ```
 
-`record_reading_completions` の返り値は `Result<Vec<ReadingCompletionResult>, AppError>` です。外側の `Result` と内側の `ReadingCompletionResult` は、失敗する範囲が異なります。
+1. `ReadingCompletionResult` は `Completed(CompletedReading)` か `Failed { book_id, error }` の enum です。成功時は保存された本とメモを、失敗時はどの本がなぜ失敗したかを持ちます。
+2. 外側 `Result` の `Err(AppError)` は要求全体の失敗です。件数、重複、空のメモ本文など、保存を始められない入力規則を表します。
+3. 内側の `Failed` は一冊分の結果です。HTTP status は変えず、`200` の `results` に並びます。
+4. `ReadingCompletionFailure` は `NotFound`・`Conflict`・`Internal` の 3 値です。HTTP の status やメッセージ本文そのものは持ちません。
+5. `From<AppError>` が repository の内部失敗をこの 3 値へ写します。`NotFound` と `Conflict` はそのまま、`Database`・`InvalidStoredValue`・`Validation` は `tracing::error!` で原因をログへ残し、利用者向けには一律 `Internal` にします。
 
 | 失敗 | 表現 | HTTP | 保存結果 |
 | --- | --- | --- | --- |
@@ -36,13 +44,35 @@
 
 入力規則の違反は、処理してよい一括読了記録がまだ成立していないため、要求全体を拒否します。入力全体が正しければ、一冊ごとの読了記録は互いに独立しています。ある本の未検出や競合を、別の本まで失敗させる理由にはしません。
 
-`From<AppError>` は repository から返った内部の失敗を、読了結果で公開する 3 種類へ変換します。`Database` と `InvalidStoredValue` は原因をログへ残しますが、利用者向けにはどちらも `Internal` です。SQL、trigger、保存されていた不正な値などの詳細は応答へ含めません。repository から想定外の `Validation` が返った場合も、利用者の入力不正とは扱わず内部失敗として記録します。
+外側の `Err(AppError)` は handler の `?` を通り、`src/error.rs` の `IntoResponse` が status へ変換します。`Validation` は `400`、`Database` と `InvalidStoredValue` は `500` です。この経路は [HTTP から SQLite まで](../05-flow/http-to-sqlite.md) で扱います。
 
-## 一冊の失敗を結果として扱う
+## 読了結果を HTTP の outcome へ変換する
 
 `ReadingCompletionResult::Failed` は、一括読了記録そのものを失敗させる `AppError` ではなく、一冊分の読了結果です。service は一冊の失敗をこの値へ変換し、ほかの本の結果とともに返します。各処理の進み方や完了順にかかわらず、利用者へ返す `results` は入力との対応を保つことが契約です。
 
-handler は `ReadingCompletionResult` を次のどちらかへ変換します。
+対象: `src/handler.rs` の `ReadingCompletionResultResponse` と `From<ReadingCompletionResult>`
+
+```rust,ignore
+{{#include ../../../src/handler.rs:completion_response_types}}
+```
+
+```rust,ignore
+{{#include ../../../src/handler.rs:completion_success_response}}
+```
+
+```rust,ignore
+{{#include ../../../src/handler.rs:completion_result_response}}
+```
+
+1. enum の `#[serde(tag = "outcome", rename_all = "snake_case")]` は、variant 名を `outcome` フィールドの値にする内部タグ表現を指定します。`Completed` は `"completed"`、`Failed` は `"failed"` になります。
+2. `Completed` variant は `book_id`・`book`・`note`、`Failed` variant は `book_id`・`error` を持ちます。variant ごとにフィールドが違うため、JSON では成功と失敗で形が変わります。
+3. `ReadingCompletionErrorResponse` は `code: &'static str` と `message: &'static str` を持ちます。固定文字列なので実行時の割り当ては不要です。
+4. `From<CompletedReading>` は所有権を移しながら `book` と `note` を応答へ変換し、`book_id` は `completion.book.id()` から取ります。
+5. `From<ReadingCompletionResult>` は `Completed` を `completion.into()` で 4 の変換へ委譲し、`Failed` は `ReadingCompletionFailure` を 3 分岐で `code`/`message` へ写します。
+6. 写像は `NotFound` → `("not_found", "resource not found")`、`Conflict` → `("conflict", "reading state conflict")`、`Internal` → `("internal_error", "internal server error")` です。
+7. handler は `results` を入力順のまま `map(ReadingCompletionResultResponse::from)` で JSON 化します。外側 `AppError` だけが Axum の `IntoResponse` へ渡り、`400` などになります。
+
+それぞれの応答は次の形です。
 
 ```json
 {"book_id":1,"outcome":"completed","book":{"id":1,"title":"Book","author":"Author","status":"finished"},"note":{"id":1,"body":"読了メモ"}}
@@ -56,11 +86,13 @@ handler は `ReadingCompletionResult` を次のどちらかへ変換します。
 
 ## 一冊の中では片方だけを残さない
 
+対象: `src/repository/sqlite.rs` の `SqliteBookRepository::record_reading_completion`
+
 ```rust,ignore
 {{#include ../../../src/repository/sqlite.rs:reading_completion_transaction}}
 ```
 
-一冊の読了記録は、状態を `finished` へ更新し、メモを追加してから transaction を commit します。更新対象がなければ `Conflict` です。メモ追加や commit が失敗して関数を途中で抜けると transaction は rollback され、状態変更だけを残しません。
+一冊の読了記録は、状態を `finished` へ更新し、メモを追加してから transaction を commit します。更新対象がなければ `Conflict` です。メモ追加や commit が失敗して `?` で関数を抜けると transaction は rollback され、状態変更だけを残しません。構文の詳細は [状態変更とメモを一緒に保存する](atomic-completion.md) で扱いました。
 
 ここには 2 つの保存範囲があります。
 

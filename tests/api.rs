@@ -12,7 +12,7 @@ async fn test_app() -> axum::Router {
     test_app_and_pool().await.0
 }
 
-// ANCHOR: api_test_setup
+// ANCHOR: api_test_database
 async fn test_app_and_pool() -> (axum::Router, SqlitePool) {
     // 教材の接続管理を単純にするため最大 1 接続にする。各テストは別の pool を作る。
     // SQLx 0.8.6 の sqlite::memory: は、同じ pool の複数接続でも DB を共有できる。
@@ -24,14 +24,16 @@ async fn test_app_and_pool() -> (axum::Router, SqlitePool) {
     sqlx::migrate!().run(&pool).await.unwrap();
     (build_app(pool.clone()), pool)
 }
+// ANCHOR_END: api_test_database
 
+// ANCHOR: api_test_json_body
 async fn json_body(response: axum::response::Response) -> Value {
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
     serde_json::from_slice(&bytes).unwrap()
 }
+// ANCHOR_END: api_test_json_body
 
-// ANCHOR_END: api_test_setup
-
+// ANCHOR: api_test_json_request
 fn json_request(method: &str, path: &str, body: Value) -> Request<Body> {
     Request::builder()
         .method(method)
@@ -40,6 +42,7 @@ fn json_request(method: &str, path: &str, body: Value) -> Request<Body> {
         .body(Body::from(body.to_string()))
         .unwrap()
 }
+// ANCHOR_END: api_test_json_request
 
 #[tokio::test]
 async fn hides_database_error_details() {
@@ -665,6 +668,7 @@ async fn records_reading_completions_and_returns_the_persisted_results() {
         assert_eq!(response.status(), StatusCode::OK);
     }
 
+    // ANCHOR: api_completion_request
     let response = app
         .clone()
         .oneshot(json_request(
@@ -679,6 +683,7 @@ async fn records_reading_completions_and_returns_the_persisted_results() {
         ))
         .await
         .unwrap();
+    // ANCHOR_END: api_completion_request
 
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
@@ -711,6 +716,7 @@ async fn records_reading_completions_and_returns_the_persisted_results() {
         })
     );
 
+    // ANCHOR: api_completion_readback
     for (book_id, note_id, expected_note) in [
         (1, 2, "所有権の章を実装と結び付けて読めた"),
         (2, 1, "Future が保持する値を確認した"),
@@ -732,6 +738,7 @@ async fn records_reading_completions_and_returns_the_persisted_results() {
             json!([{"id": note_id, "body": expected_note}])
         );
     }
+    // ANCHOR_END: api_completion_readback
 }
 
 #[tokio::test]

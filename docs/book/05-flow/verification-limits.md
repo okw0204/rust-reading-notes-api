@@ -10,17 +10,52 @@
 
 ## 読む場所と順序
 
-1. `src/domain/book.rs` の doctest。
-2. `src/service/tests.rs` の並行進行、失敗継続、親 Future 終了のテスト。
-3. `src/repository/sqlite.rs` の repository テスト。
-4. `tests/api.rs` の一括読了記録テスト。
-5. `README.md` の実行手順と本章の検証表。
+1. [テスト用 SQLite と Router を組み立てる](#テスト用-sqlite-と-router-を組み立てる)で、統合テストが通る範囲を確認する。
+2. [応答と保存状態を分けて確認する](#応答と保存状態を分けて確認する)で、一括読了記録の要求と再取得を読む。
+3. [検証ごとの保証を分ける](#検証ごとの保証を分ける)で、型検査、フェイク、SQLite、Router、実アプリ、教材表示を比較する。
+4. [完成形の統合確認](#完成形の統合確認)で、実行済みの経路と未確認の範囲を整理する。
+
+## テスト用 SQLite と Router を組み立てる
+
+対象: `tests/api.rs` / `test_app_and_pool`。
 
 ```rust,ignore
-{{#include ../../../tests/api.rs:api_test_setup}}
+{{#include ../../../tests/api.rs:api_test_database}}
 ```
 
-## 解説
+1. `SqlitePoolOptions::new()` から始まるメソッドチェーンが、テスト用の接続 pool を作ります。`.max_connections(1)` は接続数を設定し、`.connect("sqlite::memory:")` はインメモリ SQLite へ非同期で接続します。
+2. `.await.unwrap()` は接続完了を待ち、テスト準備の失敗ならその場で panic させます。本番コードの利用者向けエラー処理ではなく、準備できなければ検証を続けないための `unwrap` です。
+3. `sqlx::migrate!().run(&pool).await.unwrap()` は、コンパイル時に埋め込んだ migration を同じ pool へ適用します。表や制約を作ってから Router を組み立てます。
+4. `(build_app(pool.clone()), pool)` はタプルを返します。`clone()` するのは pool が管理する接続を共有するハンドルで、DB 全体をコピーする処理ではありません。Router は要求を送るため、元の pool は SQL による準備や保存状態の確認に使えます。
+
+この準備を使う Router テストは TCP を開きませんが、routing、extractor、handler、service、SQLite Adapter、実 SQLite、応答変換を通ります。
+
+## 応答と保存状態を分けて確認する
+
+対象: `tests/api.rs` / `records_reading_completions_and_returns_the_persisted_results` の要求部分。前段で 2 冊を登録し、どちらも読書中へ進めています。
+
+```rust,ignore
+{{#include ../../../tests/api.rs:api_completion_request}}
+```
+
+1. `app.clone().oneshot(...)` は Router の複製ハンドルへ HTTP 要求を 1 件送ります。TCP 通信ではありませんが、登録された route から実 SQLite まで処理します。
+2. `json_request(...)` は HTTP メソッド、パス、`json!` で作った本文から要求を組み立てます。入力順は本 `2`、本 `1` です。
+3. 外側の `.await.unwrap()` は Router が応答を返すまで待ち、service 自体の `AppError` を取り出しているのではありません。アプリケーションの失敗は HTTP 応答へ変換済みなので、続く assertion が status と JSON を調べます。
+
+このテストは応答が `200 OK` で、2 件が入力順の `completed` になり、返った本が読了、メモ本文が入力と一致することを確認します。しかし応答 JSON だけなら、保存していない値を組み立てて返す誤りを見逃せます。
+
+対象: 同じテストの `GET /books/{id}` による再取得部分。
+
+```rust,ignore
+{{#include ../../../tests/api.rs:api_completion_readback}}
+```
+
+1. `for (book_id, note_id, expected_note) in [...]` は、期待値を 1 冊分ずつタプルへ分解します。読了記録の入力順ではなく本ごとに、保存された結果を確認します。
+2. `Request::get(format!(...))` で利用者向けの再取得 route を呼びます。`Body::empty()` は GET の本文を持たせない指定です。
+3. `json_body(response).await` は応答 body の chunk を最後まで集め、バイト列を `serde_json::Value` に変換します。
+4. 読書状態とメモを assertion することで、「読了応答を作れた」だけでなく、「別の要求から同じ保存結果を取得できた」ことまで観測します。
+
+## 検証ごとの保証を分ける
 
 | 検証 | 実際に通る範囲 | 分かること | 分からないこと |
 | --- | --- | --- | --- |
