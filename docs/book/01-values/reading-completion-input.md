@@ -57,7 +57,9 @@
 - `for item in input.items` は `Vec` を消費して各要素を値で取り出します。`seen_book_ids.insert(item.book_id.0)` は `BookId` の内部値で重複を調べ、すでにあれば `false` を返すので、同じ要求内の重複を拒否します。
 - 重複がなければ、`NoteBody::try_from(item.body)?` が本文の `String` を `normalize` へ移して検証します。成功時は、trim 後の範囲から新しく確保した `String` を所有する `NoteBody` と `book_id` の組を `validated` に積みます。`?` が `InvalidText` を `AppError::Validation` へ変え、失敗時はここで早期 return します。
 
-`validated` が完成するまで repository は一度も呼ばれません。先頭の項目を保存してから後続の空本文を見つける形では、`400 Bad Request` を返した要求の一部だけが残り、応答と保存状態が食い違います。要求全体の入力規則は、保存処理を一つでも始める前に確定させます。
+`validated` が完成するまで repository は一度も呼ばれません。先頭項目を保存したあとで後続の空本文を見つけると、`400 Bad Request` を返した要求の一部だけが保存されます。これでは応答と保存状態が一致しません。
+
+要求全体の入力規則は、保存処理を一つでも始める前に確定させます。
 
 入力規則の違反が `AppError::Validation` から `400 validation_error` になる対応は、[失敗後に何が残るか](../02-types/completion-failures.md)の表で確認できます。
 
@@ -115,7 +117,9 @@
 
 応答 DTO を見ただけでなく、利用者が使う Interface から保存結果まで一致することを観測しています。
 
-拒否のテストは、先頭に正しい項目、後続に空白だけの本文を置きます。`400 Bad Request` のあとで両方の本を再取得し、どちらも読書中のままでメモがないことを確認します。これにより「不正な項目自身を保存しない」だけでなく、「要求全体を保存前に検証する」規則を観測できます。
+拒否のテストは、先頭に正しい項目、後続に空白だけの本文を置きます。`400 Bad Request` のあとで両方の本を再取得し、どちらも読書中のままでメモがないことを確認します。
+
+このテストは「不正な項目自身を保存しない」だけでなく、「要求全体を保存前に検証する」規則も観測します。
 
 ## 別案との比較
 
@@ -142,9 +146,9 @@
 ## 解答
 
 1. `ReadingCompletionItemRequest` が `String` を所有し、handler の `into_iter()` が各 DTO を service の入力へ移します。service は `body` を `NoteBody::try_from` へ移し、`normalize` が trim 後の範囲から新しい `String` を作ります。成功した `NoteBody` はこの正規化済みの文字列を所有し、元の `String` は破棄されます。
-2. `into_iter()` は `Vec` を消費して各要素を取り出し、クロージャが DTO を service の入力型へ詰め替え、`book_id` は `Copy` でコピー、`body` は移動し、`collect()` が走査して一覧を組み立てます。
+2. `into_iter()` は `Vec` を消費して各要素を取り出します。クロージャは DTO を service の入力型へ詰め替え、`book_id` をコピーして `body` を移動します。最後に `collect()` がイテレータを走査し、一覧を組み立てます。
 3. service が全項目を走査して `validated` を完成させたあとにだけ repository を呼ぶためです。途中で `?` が失敗すると保存ループへ到達しません。
 4. `normalize` が返す `InvalidText` を `?` が `AppError::Validation` へ変え、`error.rs` の `IntoResponse` が `400 Bad Request` と `validation_error` に変換します。
-5. 応答として値を組み立てられたことだけでなく、その本の読書状態とメモが SQLite に残り、利用者向けの再取得経路から同じ結果を読めることが分かります。
+5. 応答用の値を組み立てられたことに加え、読書状態とメモが SQLite に残ったことも分かります。利用者向けの再取得経路から、同じ結果を読めることまで確認できます。
 
 次は[借用して検査し、所有して渡す](borrow-and-own.md)で、検査中の借用から子 Future が持つ所有値へ切り替える理由を読みます。

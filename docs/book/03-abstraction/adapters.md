@@ -31,7 +31,9 @@
 - `impl<R: BookRepository>` の境界が、`R` に要求する能力を一つに絞ります。`BookRepository` を実装していれば、SQLite でもフェイクでも同じメソッド本体を使えます。
 - `new(repository: R)` は値を受け取ってそのまま所有します。`Box<dyn ...>` のような間接参照も動的ディスパッチも伴いません。
 
-本番では `SqliteBookRepository::new(pool)` を `ReadingService::new` へ渡す式から `R = SqliteBookRepository` と推論されます。service テストでは同じ位置へ `FakeBookRepository` を渡すため `R = FakeBookRepository` になります。これは実行時に Adapter の一覧から選ぶ動的ディスパッチではなく、利用箇所ごとに具体化された `ReadingService<SqliteBookRepository>` と `ReadingService<FakeBookRepository>` が同じ `impl<R: BookRepository>` のメソッド本体を共有する形です。
+本番では、`SqliteBookRepository::new(pool)` を `ReadingService::new` へ渡す式から `R = SqliteBookRepository` と推論されます。service テストで同じ位置へ `FakeBookRepository` を渡すと、`R = FakeBookRepository` になります。
+
+実行時に Adapter の一覧から選ぶ動的ディスパッチではありません。利用箇所ごとに具体化された `ReadingService<SqliteBookRepository>` と `ReadingService<FakeBookRepository>` が、同じ `impl<R: BookRepository>` のメソッド本体を共有します。
 
 <a id="app-assembly"></a>
 ### アプリの組み立ては Adapter を一つ受け取る
@@ -202,7 +204,9 @@ Adapter を受け取って状態と Router を組む入口です。
 - 条件を満たすときだけ、状態を `Finished` へ更新し、メモを同じ `state` の変更として追加します。片方だけを残す中間状態がありません。
 - 最後に `attempt.finish()` を呼び、破棄ではない完了として記録します。親 Future が途中で捨てられれば `Drop` が破棄として記録します。
 
-フェイクは SQLite の内部をまねません。`BTreeMap` 上で、呼び出し側から観測できる契約を同じにします。テストは呼び出し回数や内部メソッドの順序ではなく、返る失敗と再取得できる保存状態を観測します。制御点は並行性や失敗位置を決定的に作るためにだけ使います。
+フェイクは SQLite の内部をまねません。`BTreeMap` 上で、呼び出し側から観測できる契約を同じにします。
+
+テストが観測するのは、返る失敗と再取得できる保存状態です。呼び出し回数や内部メソッドの順序ではありません。制御点は、並行性や失敗位置を決定的に作るためにだけ使います。
 
 `Arc`、`Mutex`、`Semaphore` はスレッドをまたいで使われるため、その内側の型の `Send` と `Sync` が要求に関わります。これらと Future の寿命の関係は[Future が値を保持する範囲](../04-async/future-values.md)で読みます。
 
