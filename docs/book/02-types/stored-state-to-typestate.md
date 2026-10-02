@@ -10,7 +10,7 @@ DB を読むまで状態が分からない本を、どうやって `Book<Reading
 
 ## 読む場所と順序
 
-この章の見出しを次の順で読みます。各見出しの直前に、対応する実コードの抜粋があります。
+次の順で読みます。各節の直前に、対応する実コードの抜粋があります。
 
 1. [DB 行を状態ごとの本へ復元する](#db-行を状態ごとの本へ復元する): SQLite の行を検証済みの値へ移す。
 2. [状態を型引数に持つ Book](#状態を型引数に持つ-book): 3 つのマーカー型と、状態ごとにだけ生えるメソッド。
@@ -56,7 +56,9 @@ DB を読むまで状態が分からない本を、どうやって `Book<Reading
 4. `finish` は `impl Book<Reading>` にだけ定義されています。`Book<Reading>` を受け取り、`state: Finished` の `Book<Finished>` を返します。
 5. `id`・`title`・`author` の取得は `impl<S> Book<S>` にあり、どの状態でも使えます。`into_parts` は crate 内専用です。
 
-冒頭の doctest は `Book::new(...).start_reading().finish()` を実行し、位置を飛ばせないことを示します。続く `compile_fail,E0599` は、未読の本へ直接 `finish()` を呼ぶコードが「その型に `finish` がない」ためにコンパイルへ失敗することを固定します。`E0599` はメソッドが見つからないときのエラー番号です。
+冒頭の doctest は `Book::new(...).start_reading().finish()` を実行し、状態を飛ばせないことを示します。
+
+続く `compile_fail,E0599` は、未読の本へ直接 `finish()` を呼ぶコードがコンパイルに失敗することを固定します。未読を表す型には `finish` がないためです。`E0599` はメソッドが見つからないときのエラー番号です。
 
 ## 実行時の状態を一つの enum に集める
 
@@ -88,7 +90,9 @@ DB を読むまで状態が分からない本を、どうやって `Book<Reading
 4. `reading.finish()` は `Book<Reading>` を消費して `Book<Finished>` を返します。
 5. その `Book<Finished>` と `body: &NoteBody` を repository の `record_reading_completion` へ移し、保存された本とメモを `CompletedReading` で返します。
 
-`StoredBook::Reading(book)` の枝で `book` の型が確定するため、`impl Book<Reading>` にだけある `finish` を呼べます。型が保証するのは手元の所有値に対する合法な遷移です。同じ DB 行を別に取得した値や、取得後に変わった保存状態までは消せません。repository は保存時に現在状態を再検査します（[状態変更とメモを一緒に保存する](atomic-completion.md) で扱います）。
+`StoredBook::Reading(book)` の枝では `book` の型が確定し、`impl Book<Reading>` にだけある `finish` を呼べます。
+
+型が保証するのは、手元の所有値に対する合法な遷移です。同じ DB 行を別に取得した値や、取得後に変わった保存状態までは保証しません。repository は保存時に現在状態を再検査します。詳しくは[状態変更とメモを一緒に保存する](atomic-completion.md)で扱います。
 
 ## 未知の入力と未知の保存値を分ける
 
@@ -103,7 +107,7 @@ DB を読むまで状態が分からない本を、どうやって `Book<Reading
 3. `parse_input` は HTTP 入力を解釈し、未知の文字列なら `AppError::Validation` を返します。利用者が直せる入力規則の違反は `400 Bad Request` です。
 4. `TryFrom<&str>` は DB の保存値を解釈し、未知なら `AppError::InvalidStoredValue` を返します。ドメイン型へ戻せない内部状態は `500` です。
 
-同じ enum でも、入口が変われば失敗分類が変わります。`parse_input` は利用者向けの入力、`TryFrom<&str>` は保存値の復元専用です。両者を分けることで、未知の HTTP 入力と壊れた保存値を同じ扱いにする事故を防ぎます。
+同じ enum でも、入口が変われば失敗分類が変わります。`parse_input` は利用者向けの入力、`TryFrom<&str>` は保存値の復元専用です。両者を分けることで、未知の HTTP 入力と不正な保存値を同じ扱いにする誤りを防ぎます。
 
 ## 別案との比較
 

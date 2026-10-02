@@ -55,7 +55,9 @@ sequenceDiagram
 2. `impl From<AppError> for ReadingCompletionFailure` は、`NotFound` と `Conflict` を同じ名前の variant へ、`Database`、`InvalidStoredValue`、`Validation` をログ付きで `Internal` へ畳みます。
 3. `error.into()` の `into` はこの `From` 実装を選びます。呼び出し側は `AppError` ごとの分岐を書かずに済みます。
 
-失敗も一件分の値になって `(position, result)` として集合へ戻るため、親 Future は残りの子 Future を保持したまま `pending.next().await` を続けます。全件が成功することではなく、入力した全件について成功または失敗を返すことが一括読了記録の契約です。
+失敗も一件分の値として `(position, result)` の形で集合へ戻ります。そのため、親 Future は残りの子 Future を保持したまま `pending.next().await` を続けます。
+
+一括読了記録の契約は全件の成功ではありません。入力した全件について、成功または失敗を返すことです。
 
 対象: `src/service/tests.rs` / `continues_other_completions_after_one_fails`
 
@@ -78,7 +80,9 @@ sequenceDiagram
 2. `results[1]` は二冊目の結果で、`Completed` であることを確認します。
 3. 失敗が一件分の値になっているので、入力順の並べ替えはそのまま働きます。
 
-このテストは、制御可能なフェイクで二冊の保存開始を確認してから、一冊目だけに DB エラーを返します。その失敗が `ReadingCompletionFailure::Internal` として一件分の結果になったあとで二冊目を解放し、二冊目が読了してメモも残ることを確認します。一冊目は読書中のままで、メモも残りません。待ち時間や scheduler の偶然には依存しません。
+このテストでは、制御可能なフェイクで二冊の保存開始を確認し、一冊目だけに DB エラーを返します。一冊目の失敗が `ReadingCompletionFailure::Internal` になったあとで二冊目を解放し、処理の継続を確認します。
+
+一冊目は読書中のままで、メモも残りません。二冊目は読了し、メモも残ります。待ち時間や scheduler の偶然には依存しません。
 
 ### 親 Future が子 Future を所有する
 
@@ -139,7 +143,9 @@ stateDiagram-v2
 
 一冊の中では、読書状態の変更とメモ追加を同じ repository 操作で確定します。SQLite Adapter は transaction を使うため、commit 前にその Future が破棄された場合は未確定の変更が rollback され、片方だけは残りません。
 
-一方、冊子間を一つの transaction にはしていません。一冊の commit 後に親 Future が破棄されても、その commit は別の一冊の未完了処理と一緒には取り消されません。処理の終了時点によって確定済みの冊数は変わり得ます。親 Future が完了していないので HTTP 応答は返らず、利用者は本の詳細取得から保存状態を確認する必要があります。
+一方、複数の本を一つの transaction にはしていません。一冊の commit 後に親 Future が破棄されても、その commit は別の一冊の未完了処理と一緒には取り消されません。終了時点によって、確定済みの冊数は変わり得ます。
+
+親 Future が完了していないため、HTTP 応答は返りません。利用者は本の詳細取得から保存状態を確認します。
 
 型と所有関係から分かるのは、親 Future の破棄に未完了の子 Future が従うことです。破棄の瞬間までにどの transaction が commit したかは実行時の状態であり、型だけでは決まりません。
 
@@ -147,15 +153,21 @@ stateDiagram-v2
 
 ### 最初の失敗で全件を終了する
 
-子 Future の失敗を `?` で親 Future まで伝播すれば実装は短くできます。しかし、冊子間の部分成功を許し、各入力へ読了結果を返す契約を満たしません。すでに commit した別の本を取り消せないため、応答から保存状態との対応も追いにくくなります。
+子 Future の失敗を `?` で親 Future まで伝播すれば、実装は短くなります。しかし、複数の本の間での部分成功を許し、各入力へ読了結果を返す契約を満たしません。
+
+別の本ですでに commit した結果は取り消せません。最初の失敗で終了すると、応答から保存状態との対応も追いにくくなります。
 
 ### 各処理を `tokio::spawn` で切り離す
 
-親 Future の終了後も全件を完了させる要件があるなら成立する案です。その場合は task の所有者、処理状態の保存と再取得、shutdown、再試行、HTTP 応答との対応を設計する必要があります。今回はそれらの契約を持たないため、親 Future と寿命をそろえます。
+親 Future の終了後も全件を完了させる要件があるなら成立する案です。その場合は task の所有者、処理状態の保存と再取得、shutdown、再試行、HTTP 応答との対応を設計する必要があります。
+
+今回はそれらの契約を持たないため、子 Future の寿命を親 Future にそろえます。
 
 ### 親 Future の破棄時に確定済みの保存も戻す
 
-全冊を一つの transaction に入れれば全体を戻せる場合があります。しかし一冊ごとの独立した結果と並行進行を失い、長い transaction が複数の処理を抱えます。一括読了記録は一冊の中だけを原子的にし、冊子間では確定済みの成功を残す契約です。
+全冊を一つの transaction に入れれば、確定済みの保存まで戻せる場合があります。しかし、一冊ごとの独立した結果と並行進行を失い、長い transaction が複数の処理を抱えます。
+
+一括読了記録は一冊の中だけを原子的にし、複数の本の間では確定済みの成功を残す契約です。
 
 ## 確認
 
@@ -172,7 +184,7 @@ stateDiagram-v2
 1. 各子 Future が失敗を親全体の `Err` ではなく一件分の `ReadingCompletionResult::Failed` へ変換し、親 Future が `pending.next().await` を続けるためです。
 2. `AppError` から `ReadingCompletionFailure` への変換です。`impl From<AppError> for ReadingCompletionFailure` が選ばれ、依存先の失敗は `Internal` へ畳まれます。
 3. 親 Future が所有する `FuturesUnordered` とともに破棄され、それ以降は poll されません。切り離した task は残りません。
-4. 冊子間は一つの transaction ではなく、一冊ごとに独立して commit するためです。Future の破棄には、保存先へ確定した変更を巻き戻す効果はありません。
+4. 複数の本は一つの transaction ではなく、一冊ごとに独立して commit するためです。Future の破棄には、保存先へ確定した変更を巻き戻す効果はありません。
 5. Future の破棄は未完了処理を今後進めないことです。rollback は一冊の transaction 内で未確定の状態変更とメモ追加を両方とも保存しないことです。
 6. 一冊ごとの待機点を持つフェイクで、開始、失敗、成功、親 Future の破棄をテスト側から順番に起こします。実時間の短さや偶然の完了順は使いません。
 7. task の所有者、終了後の処理状態を取得する Interface、shutdown、再試行、HTTP 応答との関係も必要になるためです。

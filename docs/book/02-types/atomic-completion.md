@@ -10,12 +10,12 @@
 
 ## 読む場所と順序
 
-この章の見出しを次の順で読みます。各見出しの直前に、対応する実コードの抜粋があります。
+次の順で読みます。各節の直前に、対応する実コードの抜粋があります。
 
 1. [repository が約束する一冊の保存単位](#repository-が約束する一冊の保存単位): 呼び出し側が知る契約。
 2. [条件付き UPDATE と transaction](#条件付き-update-と-transaction): SQLx の呼び出しと確定手順。
 3. [失敗すると transaction 全体が rollback される](#失敗すると-transaction-全体が-rollback-される): `?` で抜けたときの保存状態。
-4. [冊子間は独立した保存単位](#冊子間は独立した保存単位): 一冊の原子性と部分成功の境界。
+4. [複数の本は独立した保存単位](#複数の本は独立した保存単位): 一冊の原子性と部分成功の境界。
 5. [migration を追加しない理由](#migration-を追加しない理由): 既存の表で足りる根拠。
 
 ## repository が約束する一冊の保存単位
@@ -57,7 +57,7 @@ doc コメントの 3 行が、このメソッドの契約そのものです。
 
 ## 失敗すると transaction 全体が rollback される
 
-メモ追加、行の変換、commit のどれかが `Err` になると、`?` が関数を途中で抜けます。`commit()` の前に transaction が破棄されると、SQLite の未確定の変更は rollback されます。そのため「読了状態だけ」「メモだけ」という半端な読了記録を残しません。
+メモ追加、行の変換、commit のどれかが `Err` になると、`?` が関数を途中で抜けます。`commit()` 前に transaction が破棄されるため、SQLite の未確定の変更は rollback されます。そのため「読了状態だけ」「メモだけ」という半端な読了記録を残しません。
 
 ```mermaid
 stateDiagram-v2
@@ -69,11 +69,13 @@ stateDiagram-v2
     WithNote --> Reading: failure / rollback
 ```
 
-テストの `rolls_back_a_completion_when_adding_its_note_fails` は、`notes` への `INSERT` を必ず拒否する trigger をテスト内で作ります。待ち時間や実行順に依存せず、状態更新のあとのメモ保存だけを決定的に失敗させ、rollback 後の保存状態を観測します。
+テストの `rolls_back_a_completion_when_adding_its_note_fails` は、`notes` への `INSERT` を必ず拒否する trigger を作ります。状態更新のあとのメモ保存だけを決定的に失敗させ、rollback 後の保存状態を観測します。待ち時間や実行順には依存しません。
 
-## 冊子間は独立した保存単位
+## 複数の本は独立した保存単位
 
-一冊の原子性はこの repository の一つの transaction が担います。冊子間は、service が一冊ごとに独立した子 Future を進め、それぞれの transaction を commit することで切り離します。ある本の競合や DB エラーはその一冊を失敗にしますが、別の本ですでに commit した読了記録を取り消しません。この分け方は次章 [失敗後に何が残るか](completion-failures.md) で結果へ対応付けます。
+一冊の原子性は、repository の一つの transaction が担います。service は一冊ごとに独立した子 Future を進め、それぞれの transaction を commit します。
+
+ある本の競合や DB エラーは、その一冊だけを失敗にします。別の本ですでに commit した読了記録は取り消しません。この分け方は次章の[失敗後に何が残るか](completion-failures.md)で結果へ対応付けます。
 
 ## migration を追加しない理由
 
@@ -97,14 +99,14 @@ stateDiagram-v2
 
 1. `Book<Finished>` があっても `WHERE status = 'reading'` が必要なのはなぜですか。
 2. メモ追加が失敗したとき、状態変更だけが残らない根拠は何ですか。
-3. 一冊の原子性と冊子間の部分成功は、どの境界で分かれますか。
+3. 一冊の原子性と、複数の本の間での部分成功は、どの境界で分かれますか。
 4. 今回 migration を追加しない理由は何ですか。
 
 ## 解答
 
 1. 型状態は取得後の DB の変化を知らず、同じ ID の別スナップショットも存在できるためです。
 2. 状態更新とメモ追加を同じ transaction で行い、commit 前の失敗では transaction 全体を rollback するためです。
-3. 一冊は repository の一つの transaction、冊子間は service が持つ独立した子 Future と個別 commit で分かれます。
+3. 一冊は repository の一つの transaction、複数の本は service が持つ独立した子 Future と個別 commit で分かれます。
 4. 読了記録は既存の本の状態と既存のメモで表現でき、新しい保存概念や列を必要としないためです。
 
 次は[失敗後に何が残るか](completion-failures.md)で、入力不正、未検出、競合、依存先の失敗を結果と保存状態へ対応付けます。

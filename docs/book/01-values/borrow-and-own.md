@@ -28,7 +28,7 @@
 - 成功時は `value.to_owned()` で trim 後の範囲から新しい `String` を一度だけ作り、所有値として返します。検査に使った借用をそのまま返すと元の `String` の寿命に縛られるため、独立して生存できる値へ切り替えます。
 - 失敗時は `&'static str` のメッセージを持つ `InvalidText` を返し、確保は行いません。
 
-つまり検査は借用で済ませ、HTTP DTO から切り離して長く使う本文だけを所有値へ写します。この所有値が `NoteBody` です。
+検査は借用で済ませ、HTTP DTO から切り離して長く使う本文だけを所有値へ写します。この所有値が `NoteBody` です。
 
 ```mermaid
 flowchart LR
@@ -53,11 +53,11 @@ flowchart LR
 - `|(position, (book_id, body))| async move { ... }` の `async move` は、位置と `book_id`（どちらも `Copy`）をコピーし、`body: NoteBody` の所有権を子 Future へ移します。`body` を clone せず、所有者を一つに保ちます。
 - 子 Future の内側の `self.record_reading_completion(book_id, &body).await` は `body` を借用して repository の保存 Future を作り、その Future を子 Future の中で完了まで待ちます。repository 側は `&NoteBody` から `as_str()` で `&str` を取り、SQL へ bind します。
 - `.collect::<FuturesUnordered<_>>()` は、同じ型を持つ子 Future を一つのコレクションへ集めます。各子 Future が自分の `NoteBody` を所有するため、位置や本文を親の `Vec` に残しておく必要がありません。
-- 子 Future が `.await` をまたいで `body` を所有し続けるので、親の検証ループを抜けて `validated` の `Vec` が消費された後も本文が生きています。もし子 Future が `validated` の中の `&str` を借りていたら、親の `Vec` を消費できず、子 Future の寿命もそこへ縛られます。
+- 子 Future は `.await` をまたいで `body` を所有し続けます。そのため、親の検証ループを抜けて `validated` の `Vec` が消費された後も本文が生きています。子 Future が `validated` 内の `&str` を借りる形では、親の `Vec` を消費できません。子 Future の寿命も、その `Vec` に縛られます。
 
 収集した結果を入力順へ戻す仕組みは[完了順と入力順を分ける](../04-async/completion-order.md)で読みます。
 
-handler 側でも同じ判断が現れます。各 `ReadingCompletionItemRequest` から `book_id` と `body` を移した後の項目全体は使えませんが、二つのフィールドを使い切る変換では clone する理由がありません（[handler の入力変換](reading-completion-input.md#handler-の入力変換)）。
+handler 側でも同じ判断をしています。各 `ReadingCompletionItemRequest` から `book_id` と `body` を移した後は、元の項目を使いません。二つのフィールドを使い切る変換なので clone は不要です（[handler の入力変換](reading-completion-input.md#handler-の入力変換)）。
 
 ## 別案との比較
 
@@ -71,7 +71,7 @@ handler 側でも同じ判断が現れます。各 `ReadingCompletionItemRequest
 
 ### `&str` を切り離した task へ渡す
 
-呼び出し元より task が長く生存できるため成立しません。現在は task を切り離さず、親 Future が所有する `NoteBody` を子 Future が所有する形にします。
+呼び出し元より task が長く生存できるため、借用では成立しません。現在は task を切り離さず、親 Future が持つ `NoteBody` の所有権を子 Future へ移します。
 
 ## 確認
 
