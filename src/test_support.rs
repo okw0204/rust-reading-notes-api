@@ -11,7 +11,7 @@ use crate::{
         StoredBook,
     },
     error::AppError,
-    repository::BookRepository,
+    repository::{BookRepository, SortDirection},
 };
 
 // ANCHOR: fake_struct
@@ -210,14 +210,24 @@ impl BookRepository for FakeBookRepository {
         Ok(book)
     }
 
-    async fn list_books(&self, status: Option<ReadingStatus>) -> Result<Vec<StoredBook>, AppError> {
+    async fn list_books(
+        &self,
+        status: Option<ReadingStatus>,
+        order: Option<SortDirection>,
+    ) -> Result<Vec<StoredBook>, AppError> {
         let state = self.state.lock();
-        Ok(state
+        let mut books = state
             .books
             .values()
             .filter(|book| status.is_none_or(|status| book.status() == status))
             .cloned()
-            .collect())
+            .collect::<Vec<_>>();
+
+        if matches!(order, Some(SortDirection::Desc)) {
+            books.reverse();
+        }
+
+        Ok(books)
     }
 
     async fn find_book(&self, id: BookId) -> Result<StoredBook, AppError> {
