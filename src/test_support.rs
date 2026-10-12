@@ -213,7 +213,7 @@ impl BookRepository for FakeBookRepository {
     async fn list_books(
         &self,
         status: Option<ReadingStatus>,
-        order: Option<SortDirection>,
+        order: SortDirection,
     ) -> Result<Vec<StoredBook>, AppError> {
         let state = self.state.lock();
         let mut books = state
@@ -223,7 +223,7 @@ impl BookRepository for FakeBookRepository {
             .cloned()
             .collect::<Vec<_>>();
 
-        if matches!(order, Some(SortDirection::Desc)) {
+        if order == SortDirection::Desc {
             books.reverse();
         }
 

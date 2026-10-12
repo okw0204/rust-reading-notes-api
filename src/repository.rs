@@ -29,7 +29,7 @@ pub(crate) trait BookRepository: Send + Sync {
     fn list_books(
         &self,
         status: Option<ReadingStatus>,
-        order: Option<SortDirection>,
+        order: SortDirection,
     ) -> impl Future<Output = Result<Vec<StoredBook>, AppError>> + Send;
 
     /// ID に対応する本を返し、未検出なら NotFound を返します。

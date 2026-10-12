@@ -103,10 +103,10 @@ impl<R: BookRepository> ReadingService<R> {
             .as_deref()
             .map(ReadingStatus::parse_input)
             .transpose()?;
-        let order = order
-            .as_deref()
-            .map(SortDirection::parse_input)
-            .transpose()?;
+        let order = match order {
+            Some(value) => SortDirection::parse_input(&value)?,
+            None => SortDirection::Asc,
+        };
         self.repository.list_books(status, order).await
     }
 
