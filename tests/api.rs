@@ -284,55 +284,121 @@ async fn rejects_a_blank_author() {
 }
 
 #[tokio::test]
-async fn lists_books() {
+async fn lists_books_by_reading_status_and_id_order() {
     let app = test_app().await;
-    let create_request = Request::post("/books")
-        .header("content-type", "application/json")
-        .body(Body::from(
-            json!({"title": "Programming Rust", "author": "Jim Blandy"}).to_string(),
-        ))
-        .unwrap();
-    app.clone().oneshot(create_request).await.unwrap();
+    let mut ids = Vec::new();
+    for (title, author) in [
+        ("Book C", "Author C"),
+        ("Book A", "Author A"),
+        ("Book B", "Author B"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/books",
+                json!({"title": title, "author": author}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        ids.push(json_body(response).await["id"].as_i64().unwrap());
+    }
+    for book_id in [ids[0], ids[2]] {
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "PATCH",
+                &format!("/books/{book_id}/status"),
+                json!({"status": "reading"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
 
-    let response = app
-        .oneshot(Request::get("/books").body(Body::empty()).unwrap())
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(
-        json_body(response).await,
-        json!([{
-            "id": 1,
-            "title": "Programming Rust",
-            "author": "Jim Blandy",
+    let all_asc = vec![
+        json!({
+            "id": ids[0],
+            "title": "Book C",
+            "author": "Author C",
+            "status": "reading"
+        }),
+        json!({
+            "id": ids[1],
+            "title": "Book A",
+            "author": "Author A",
             "status": "want_to_read"
-        }])
-    );
+        }),
+        json!({
+            "id": ids[2],
+            "title": "Book B",
+            "author": "Author B",
+            "status": "reading"
+        }),
+    ];
+    let all_desc = all_asc.iter().rev().cloned().collect::<Vec<_>>();
+    let reading_asc = vec![all_asc[0].clone(), all_asc[2].clone()];
+    let reading_desc = reading_asc.iter().rev().cloned().collect::<Vec<_>>();
+    let no_books = Vec::new();
+
+    for (case, path, expected) in [
+        ("order omitted", "/books", all_asc.as_slice()),
+        ("ascending", "/books?order=asc", all_asc.as_slice()),
+        ("descending", "/books?order=desc", all_desc.as_slice()),
+        (
+            "reading status",
+            "/books?status=reading",
+            reading_asc.as_slice(),
+        ),
+        (
+            "reading status descending",
+            "/books?status=reading&order=desc",
+            reading_desc.as_slice(),
+        ),
+        (
+            "no matching status",
+            "/books?status=finished",
+            no_books.as_slice(),
+        ),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(Request::get(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{case}");
+        assert_eq!(
+            json_body(response).await.as_array().unwrap(),
+            expected,
+            "{case}"
+        );
+    }
 }
 
 #[tokio::test]
-async fn filters_books_by_reading_status() {
+async fn rejects_invalid_book_id_order() {
     let app = test_app().await;
-    let create_request = Request::post("/books")
-        .header("content-type", "application/json")
-        .body(Body::from(
-            json!({"title": "Programming Rust", "author": "Jim Blandy"}).to_string(),
-        ))
-        .unwrap();
-    app.clone().oneshot(create_request).await.unwrap();
 
-    let response = app
-        .oneshot(
-            Request::get("/books?status=finished")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(json_body(response).await, json!([]));
+    for (case, path) in [
+        ("empty", "/books?order="),
+        ("uppercase", "/books?order=ASC"),
+        ("leading whitespace", "/books?order=%20asc"),
+        ("trailing whitespace", "/books?order=desc%20"),
+        ("unknown", "/books?order=unknown"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(Request::get(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{case}");
+        assert_eq!(
+            json_body(response).await["error"]["code"],
+            "validation_error",
+            "{case}"
+        );
+    }
 }
 
 #[tokio::test]

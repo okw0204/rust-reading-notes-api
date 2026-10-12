@@ -65,7 +65,8 @@ curl -i http://127.0.0.1:3000/books \
   -d '{"title":"Rust for Rustaceans","author":"Jon Gjengset"}'
 
 curl http://127.0.0.1:3000/books
-curl 'http://127.0.0.1:3000/books?status=want_to_read'
+curl 'http://127.0.0.1:3000/books?order=desc'
+curl 'http://127.0.0.1:3000/books?status=want_to_read&order=asc'
 ```
 
 以降の `1` は登録応答の `id` に置き換えてください。未読から読書中、読了の順に進めます。
@@ -88,13 +89,16 @@ curl -i -X DELETE http://127.0.0.1:3000/books/1
 | メソッド | パス | 成功時 | 処理 |
 | --- | --- | --- | --- |
 | `POST` | `/books` | `201` | 本を未読で登録する |
-| `GET` | `/books` | `200` | 本を一覧表示する |
-| `GET` | `/books?status=reading` | `200` | 状態で絞り込む |
+| `GET` | `/books` | `200` | 本を ID 昇順で一覧表示する |
+| `GET` | `/books?status=reading` | `200` | 読書状態で絞り込む |
+| `GET` | `/books?order=desc` | `200` | 本を ID 降順で一覧表示する |
 | `GET` | `/books/{id}` | `200` | 本とメモを取得する |
 | `PATCH` | `/books/{id}/status` | `200` | 読書状態を変更する |
 | `POST` | `/books/{id}/notes` | `201` | メモを追加する |
 | `POST` | `/reading-completions` | `200` | 1〜8 冊を読了時のメモとともに記録する |
 | `DELETE` | `/books/{id}` | `204` | 本と関連メモを削除する（本文なし） |
+
+本の一覧は `order` を省略するか `asc` を指定すると ID 昇順、`desc` を指定すると ID 降順で返します。`status` と `order` は併用できます。`asc` と `desc` 以外の値は `400 Bad Request` と `validation_error` で拒否します。
 
 登録時の状態は `want_to_read` 固定です。状態更新は `WantToRead → Reading → Finished` の順にだけ許可します。
 

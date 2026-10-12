@@ -29,6 +29,7 @@ pub(crate) trait BookRepository: Send + Sync {
     fn list_books(
         &self,
         status: Option<ReadingStatus>,
+        order: BookIdOrder,
     ) -> impl Future<Output = Result<Vec<StoredBook>, AppError>> + Send;
 
     /// ID に対応する本を返し、未検出なら NotFound を返します。
@@ -70,4 +71,22 @@ pub(crate) trait BookRepository: Send + Sync {
 
     /// 本と対応するメモを削除します。本がなければ NotFound を返します。
     fn delete_book(&self, id: BookId) -> impl Future<Output = Result<(), AppError>> + Send;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BookIdOrder {
+    Asc,
+    Desc,
+}
+
+impl BookIdOrder {
+    pub(crate) fn parse_input(value: &str) -> Result<Self, AppError> {
+        match value {
+            "asc" => Ok(Self::Asc),
+            "desc" => Ok(Self::Desc),
+            _ => Err(AppError::Validation(format!(
+                "sort direction is invalid; value = {value}"
+            ))),
+        }
+    }
 }

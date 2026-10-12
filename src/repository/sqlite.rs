@@ -9,6 +9,7 @@ use crate::{
         StoredBook,
     },
     error::AppError,
+    repository::BookIdOrder,
 };
 
 // ANCHOR: book_row_struct
@@ -93,26 +94,51 @@ impl BookRepository for SqliteBookRepository {
 
     // ANCHOR_END: insert_book_sqlite
 
-    async fn list_books(&self, status: Option<ReadingStatus>) -> Result<Vec<StoredBook>, AppError> {
+    async fn list_books(
+        &self,
+        status: Option<ReadingStatus>,
+        order: BookIdOrder,
+    ) -> Result<Vec<StoredBook>, AppError> {
         // Option の有無で SQL を分け、フィルターなしの意味を SQL 側でも明示する。
         let rows = match status {
             Some(status) => {
-                sqlx::query_as::<_, BookRow>(
-                    "SELECT id, title, author, status FROM books WHERE status = ? ORDER BY id",
-                )
-                .bind(status.as_str())
-                .fetch_all(&self.pool)
-                .await?
+                let sql = match order {
+                    BookIdOrder::Asc => {
+                        "SELECT id, title, author, status \
+                     FROM books \
+                     WHERE status = ? \
+                     ORDER BY id ASC"
+                    }
+                    BookIdOrder::Desc => {
+                        "SELECT id, title, author, status \
+                     FROM books \
+                     WHERE status = ? \
+                     ORDER BY id DESC"
+                    }
+                };
+                sqlx::query_as::<_, BookRow>(sql)
+                    .bind(status.as_str())
+                    .fetch_all(&self.pool)
+                    .await?
             }
             None => {
-                sqlx::query_as::<_, BookRow>(
-                    "SELECT id, title, author, status FROM books ORDER BY id",
-                )
-                .fetch_all(&self.pool)
-                .await?
+                let sql = match order {
+                    BookIdOrder::Asc => {
+                        "SELECT id, title, author, status \
+                     FROM books \
+                     ORDER BY id ASC"
+                    }
+                    BookIdOrder::Desc => {
+                        "SELECT id, title, author, status \
+                     FROM books \
+                     ORDER BY id DESC"
+                    }
+                };
+                sqlx::query_as::<_, BookRow>(sql)
+                    .fetch_all(&self.pool)
+                    .await?
             }
         };
-
         rows.into_iter().map(StoredBook::try_from).collect()
     }
 

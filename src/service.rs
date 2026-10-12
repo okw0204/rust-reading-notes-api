@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use crate::{
     domain::{Author, BookDetail, BookId, BookTitle, Note, NoteBody, ReadingStatus, StoredBook},
     error::AppError,
-    repository::BookRepository,
+    repository::{BookIdOrder, BookRepository},
 };
 
 pub(crate) struct CreateBook {
@@ -96,13 +96,18 @@ impl<R: BookRepository> ReadingService<R> {
     pub(crate) async fn list_books(
         &self,
         status: Option<String>,
+        order: Option<String>,
     ) -> Result<Vec<StoredBook>, AppError> {
-        // Option<Result<T, E>> を Result<Option<T>, E> に裏返すと、? で検証失敗を返せる。
+        // transpose() で Option<Result<T, E>> を Result<Option<T>, E> に裏返すと、? で検証失敗を返せる。
         let status = status
             .as_deref()
             .map(ReadingStatus::parse_input)
             .transpose()?;
-        self.repository.list_books(status).await
+        let order = match order {
+            Some(value) => BookIdOrder::parse_input(&value)?,
+            None => BookIdOrder::Asc,
+        };
+        self.repository.list_books(status, order).await
     }
 
     // ANCHOR: get_book_service
