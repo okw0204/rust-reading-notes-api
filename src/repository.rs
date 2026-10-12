@@ -29,7 +29,7 @@ pub(crate) trait BookRepository: Send + Sync {
     fn list_books(
         &self,
         status: Option<ReadingStatus>,
-        order: SortDirection,
+        order: BookIdOrder,
     ) -> impl Future<Output = Result<Vec<StoredBook>, AppError>> + Send;
 
     /// ID に対応する本を返し、未検出なら NotFound を返します。
@@ -74,12 +74,12 @@ pub(crate) trait BookRepository: Send + Sync {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SortDirection {
+pub(crate) enum BookIdOrder {
     Asc,
     Desc,
 }
 
-impl SortDirection {
+impl BookIdOrder {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Asc => "asc",

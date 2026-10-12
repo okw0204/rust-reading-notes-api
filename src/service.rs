@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use crate::{
     domain::{Author, BookDetail, BookId, BookTitle, Note, NoteBody, ReadingStatus, StoredBook},
     error::AppError,
-    repository::{BookRepository, SortDirection},
+    repository::{BookIdOrder, BookRepository},
 };
 
 pub(crate) struct CreateBook {
@@ -104,8 +104,8 @@ impl<R: BookRepository> ReadingService<R> {
             .map(ReadingStatus::parse_input)
             .transpose()?;
         let order = match order {
-            Some(value) => SortDirection::parse_input(&value)?,
-            None => SortDirection::Asc,
+            Some(value) => BookIdOrder::parse_input(&value)?,
+            None => BookIdOrder::Asc,
         };
         self.repository.list_books(status, order).await
     }

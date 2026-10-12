@@ -9,7 +9,7 @@ use crate::{
         StoredBook,
     },
     error::AppError,
-    repository::SortDirection,
+    repository::BookIdOrder,
 };
 
 // ANCHOR: book_row_struct
@@ -97,19 +97,19 @@ impl BookRepository for SqliteBookRepository {
     async fn list_books(
         &self,
         status: Option<ReadingStatus>,
-        order: SortDirection,
+        order: BookIdOrder,
     ) -> Result<Vec<StoredBook>, AppError> {
         // Option の有無で SQL を分け、フィルターなしの意味を SQL 側でも明示する。
         let rows = match status {
             Some(status) => {
                 let sql = match order {
-                    SortDirection::Asc => {
+                    BookIdOrder::Asc => {
                         "SELECT id, title, author, status \
                      FROM books \
                      WHERE status = ? \
                      ORDER BY id ASC"
                     }
-                    SortDirection::Desc => {
+                    BookIdOrder::Desc => {
                         "SELECT id, title, author, status \
                      FROM books \
                      WHERE status = ? \
@@ -123,12 +123,12 @@ impl BookRepository for SqliteBookRepository {
             }
             None => {
                 let sql = match order {
-                    SortDirection::Asc => {
+                    BookIdOrder::Asc => {
                         "SELECT id, title, author, status \
                      FROM books \
                      ORDER BY id ASC"
                     }
-                    SortDirection::Desc => {
+                    BookIdOrder::Desc => {
                         "SELECT id, title, author, status \
                      FROM books \
                      ORDER BY id DESC"
