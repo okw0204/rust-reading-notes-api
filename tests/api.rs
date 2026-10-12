@@ -336,6 +336,89 @@ async fn filters_books_by_reading_status() {
 }
 
 #[tokio::test]
+async fn lists_books_in_requested_id_order() {
+    // setup
+    let app = test_app().await;
+
+    let mut asc_expected = Vec::new();
+    for _ in 0..3 {
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/books",
+                json!({
+                    "title": "Programming Rust",
+                    "author": "Jim Blandy"
+                }),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+
+        let id = json_body(response).await["id"].as_i64().unwrap();
+
+        asc_expected.push(id);
+    }
+    let desc_expected = asc_expected.iter().rev().copied().collect::<Vec<_>>();
+
+    // act
+    let list_request = |order: Option<&str>| {
+        Request::get(match order {
+            Some(order) => format!("/books?order={order}"),
+            None => "/books".to_owned(),
+        })
+        .body(Body::empty())
+        .unwrap()
+    };
+
+    let asc_response = app
+        .clone()
+        .oneshot(list_request(Some("asc")))
+        .await
+        .unwrap();
+    let desc_response = app
+        .clone()
+        .oneshot(list_request(Some("desc")))
+        .await
+        .unwrap();
+    let none_response = app.clone().oneshot(list_request(None)).await.unwrap();
+
+    // assert
+    assert_eq!(
+        json_body(asc_response)
+            .await
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|book| book["id"].as_i64().unwrap())
+            .collect::<Vec<_>>(),
+        asc_expected,
+    );
+    assert_eq!(
+        json_body(desc_response)
+            .await
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|book| book["id"].as_i64().unwrap())
+            .collect::<Vec<_>>(),
+        desc_expected,
+    );
+    assert_eq!(
+        json_body(none_response)
+            .await
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|book| book["id"].as_i64().unwrap())
+            .collect::<Vec<_>>(),
+        asc_expected,
+    );
+}
+
+#[tokio::test]
 async fn rejects_an_unknown_reading_status_filter() {
     let app = test_app().await;
     let response = app
