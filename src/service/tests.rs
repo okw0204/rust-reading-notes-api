@@ -1,5 +1,3 @@
-use sqlx::encode::IsNull::No;
-
 use super::*;
 
 use crate::test_support::FakeBookRepository;

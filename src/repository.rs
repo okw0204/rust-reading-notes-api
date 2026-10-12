@@ -80,13 +80,6 @@ pub(crate) enum BookIdOrder {
 }
 
 impl BookIdOrder {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::Asc => "asc",
-            Self::Desc => "desc",
-        }
-    }
-
     pub(crate) fn parse_input(value: &str) -> Result<Self, AppError> {
         match value {
             "asc" => Ok(Self::Asc),
