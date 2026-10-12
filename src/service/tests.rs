@@ -66,6 +66,46 @@ async fn fake_conditional_update_rejects_deletion_after_fetch() {
     ));
 }
 
+#[tokio::test]
+async fn list_books_in_requested_order() {
+    // setup
+    let repository = FakeBookRepository::default();
+    let title = BookTitle::try_from("Book".to_owned()).unwrap();
+    let author = Author::try_from("Author".to_owned()).unwrap();
+    let first = repository.insert_book(&title, &author).await.unwrap();
+    let second = repository.insert_book(&title, &author).await.unwrap();
+    let third = repository.insert_book(&title, &author).await.unwrap();
+    let service = ReadingService::new(repository);
+
+    // act
+    let asc_got = service
+        .list_books(None, Some("asc".to_owned()))
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|book| book.id())
+        .collect::<Vec<_>>();
+    let desc_got = service
+        .list_books(None, Some("desc".to_owned()))
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|book| book.id())
+        .collect::<Vec<_>>();
+    let none_got = service
+        .list_books(None, None)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|book| book.id())
+        .collect::<Vec<_>>();
+
+    // assert
+    assert_eq!(asc_got, vec![first.id(), second.id(), third.id()]);
+    assert_eq!(desc_got, vec![third.id(), second.id(), first.id()]);
+    assert_eq!(none_got, vec![first.id(), second.id(), third.id()]);
+}
+
 // ANCHOR: service_conflict_test
 #[tokio::test]
 async fn reports_a_save_conflict_without_changing_the_book() {
