@@ -127,9 +127,22 @@ mod tests {
 
     #[test]
     fn note_body_is_trimmed_and_cannot_be_blank() {
-        let body = NoteBody::try_from("\n 所有権\n借用 \t".to_owned()).unwrap();
-        assert_eq!(body.as_str(), "所有権\n借用");
-        assert_eq!(body.into_inner(), "所有権\n借用");
+        for [value, expect] in [
+            ["\n 所有権\n借用 \t", "所有権\n借用"],
+            [
+                "a".repeat(NoteBody::MAX_LENGTH).as_str(),
+                "a".repeat(NoteBody::MAX_LENGTH).as_str(),
+            ],
+            [
+                format!(" {} ", "a".repeat(NoteBody::MAX_LENGTH)).as_str(),
+                "a".repeat(NoteBody::MAX_LENGTH).as_str(),
+            ],
+        ] {
+            assert_eq!(
+                NoteBody::try_from(value.to_owned()).unwrap().as_str(),
+                expect
+            )
+        }
         for blank in [
             "",
             " \t",
