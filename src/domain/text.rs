@@ -23,6 +23,11 @@ fn normalize(value: String, message: &'static str) -> Result<String, InvalidText
     if value.is_empty() {
         return Err(InvalidText(message));
     }
+    for c in value.chars() {
+        if matches!(c, '\r' | '\n' | '\t' | '\u{3000}') {
+            return Err(InvalidText(message));
+        }
+    }
     Ok(value.to_owned())
 }
 // ANCHOR_END: normalize_text
