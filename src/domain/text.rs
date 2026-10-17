@@ -72,11 +72,17 @@ impl TryFrom<String> for NoteBody {
     type Error = InvalidText;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
-        normalize(value, "note body must not be empty").map(Self)
+        let note = normalize(value, "note body must not be empty").map(Self)?;
+        if note.0.chars().count() > Self::MAX_LENGTH {
+            return Err(InvalidText("note body must be 500 characters or fewer"));
+        }
+        Ok(note)
     }
 }
 
 impl NoteBody {
+    const MAX_LENGTH: usize = 500;
+
     /// 検証済みの文字列を借用します。
     pub fn as_str(&self) -> &str {
         &self.0
@@ -124,7 +130,12 @@ mod tests {
         let body = NoteBody::try_from("\n 所有権\n借用 \t".to_owned()).unwrap();
         assert_eq!(body.as_str(), "所有権\n借用");
         assert_eq!(body.into_inner(), "所有権\n借用");
-        for blank in ["", " \t", "\n\u{3000}"] {
+        for blank in [
+            "",
+            " \t",
+            "\n\u{3000}",
+            "a".repeat(NoteBody::MAX_LENGTH + 1).as_str(),
+        ] {
             assert!(matches!(
                 NoteBody::try_from(blank.to_owned()),
                 Err(InvalidText(_))
