@@ -1,3 +1,5 @@
+use crate::domain::book;
+
 use super::{Author, BookId, BookTitle, ReadingStatus};
 
 // ANCHOR: book_typestate
@@ -139,6 +141,14 @@ impl StoredBook {
             Self::WantToRead(_) => ReadingStatus::WantToRead,
             Self::Reading(_) => ReadingStatus::Reading,
             Self::Finished(_) => ReadingStatus::Finished,
+        }
+    }
+
+    pub(crate) fn author(&self) -> &Author {
+        match self {
+            Self::WantToRead(book) => book.author(),
+            Self::Reading(book) => book.author(),
+            Self::Finished(book) => book.author(),
         }
     }
 

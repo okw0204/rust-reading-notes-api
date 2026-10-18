@@ -29,6 +29,7 @@ pub(crate) trait BookRepository: Send + Sync {
     fn list_books(
         &self,
         status: Option<ReadingStatus>,
+        author: Option<Author>,
         order: BookIdOrder,
     ) -> impl Future<Output = Result<Vec<StoredBook>, AppError>> + Send;
 

@@ -27,6 +27,7 @@ pub(crate) struct CreateBookRequest {
 #[derive(Deserialize)]
 pub(crate) struct ListBooksQuery {
     status: Option<String>,
+    author: Option<String>,
     order: Option<String>,
 }
 
@@ -197,7 +198,10 @@ pub(crate) async fn list_books<R: BookRepository>(
     State(state): State<AppState<R>>,
     Query(query): Query<ListBooksQuery>,
 ) -> Result<Json<Vec<BookResponse>>, AppError> {
-    let books = state.service.list_books(query.status, query.order).await?;
+    let books = state
+        .service
+        .list_books(query.status, query.author, query.order)
+        .await?;
     Ok(Json(books.into_iter().map(BookResponse::from).collect()))
 }
 
