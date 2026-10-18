@@ -67,6 +67,7 @@ curl -i http://127.0.0.1:3000/books \
 curl http://127.0.0.1:3000/books
 curl 'http://127.0.0.1:3000/books?order=desc'
 curl 'http://127.0.0.1:3000/books?status=want_to_read&order=asc'
+curl 'http://127.0.0.1:3000/books?author=Jon%20Gjengset'
 ```
 
 以降の `1` は登録応答の `id` に置き換えてください。未読から読書中、読了の順に進めます。
@@ -91,6 +92,7 @@ curl -i -X DELETE http://127.0.0.1:3000/books/1
 | `POST` | `/books` | `201` | 本を未読で登録する |
 | `GET` | `/books` | `200` | 本を ID 昇順で一覧表示する |
 | `GET` | `/books?status=reading` | `200` | 読書状態で絞り込む |
+| `GET` | `/books?author=Jon%20Gjengset` | `200` | 著者で絞り込む |
 | `GET` | `/books?order=desc` | `200` | 本を ID 降順で一覧表示する |
 | `GET` | `/books/{id}` | `200` | 本とメモを取得する |
 | `PATCH` | `/books/{id}/status` | `200` | 読書状態を変更する |

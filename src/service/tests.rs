@@ -120,7 +120,13 @@ async fn rejects_invalid_inputs_without_changing_saved_state() {
                 .await,
             Err(AppError::Validation(_))
         ));
-        assert!(service.list_books(None, None).await.unwrap().is_empty());
+        assert!(
+            service
+                .list_books(None, None, None)
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 
     let book = service
@@ -144,11 +150,15 @@ async fn rejects_invalid_inputs_without_changing_saved_state() {
     assert!(service.get_book(book.id()).await.unwrap().notes.is_empty());
 
     assert!(matches!(
-        service.list_books(Some("paused".to_owned()), None).await,
+        service
+            .list_books(Some("paused".to_owned()), None, None)
+            .await,
         Err(AppError::Validation(_))
     ));
     assert!(matches!(
-        service.list_books(None, Some("unknown".to_owned())).await,
+        service
+            .list_books(None, None, Some("unknown".to_owned()))
+            .await,
         Err(AppError::Validation(_))
     ));
     assert!(matches!(
@@ -299,13 +309,13 @@ async fn manages_books_and_notes_through_the_repository() {
         )
         .await
         .unwrap();
-    let all = service.list_books(None, None).await.unwrap();
+    let all = service.list_books(None, None, None).await.unwrap();
     assert_eq!(
         all.iter().map(StoredBook::id).collect::<Vec<_>>(),
         vec![first.id(), second.id()]
     );
     let filtered = service
-        .list_books(Some("reading".to_owned()), None)
+        .list_books(Some("reading".to_owned()), None, None)
         .await
         .unwrap();
     assert_eq!(

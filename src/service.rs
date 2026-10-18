@@ -96,6 +96,7 @@ impl<R: BookRepository> ReadingService<R> {
     pub(crate) async fn list_books(
         &self,
         status: Option<String>,
+        author: Option<String>,
         order: Option<String>,
     ) -> Result<Vec<StoredBook>, AppError> {
         // transpose() で Option<Result<T, E>> を Result<Option<T>, E> に裏返すと、? で検証失敗を返せる。
@@ -103,11 +104,12 @@ impl<R: BookRepository> ReadingService<R> {
             .as_deref()
             .map(ReadingStatus::parse_input)
             .transpose()?;
+        let author = author.map(Author::try_from).transpose()?;
         let order = match order {
             Some(value) => BookIdOrder::parse_input(&value)?,
             None => BookIdOrder::Asc,
         };
-        self.repository.list_books(status, order).await
+        self.repository.list_books(status, author, order).await
     }
 
     // ANCHOR: get_book_service

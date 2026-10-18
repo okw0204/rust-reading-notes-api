@@ -213,6 +213,7 @@ impl BookRepository for FakeBookRepository {
     async fn list_books(
         &self,
         status: Option<ReadingStatus>,
+        author: Option<Author>,
         order: BookIdOrder,
     ) -> Result<Vec<StoredBook>, AppError> {
         let state = self.state.lock();
@@ -220,6 +221,7 @@ impl BookRepository for FakeBookRepository {
             .books
             .values()
             .filter(|book| status.is_none_or(|status| book.status() == status))
+            .filter(|book| author.as_ref().is_none_or(|author| book.author() == author))
             .cloned()
             .collect::<Vec<_>>();
 
