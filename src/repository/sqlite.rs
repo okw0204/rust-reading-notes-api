@@ -101,7 +101,7 @@ impl BookRepository for SqliteBookRepository {
         order: BookIdOrder,
     ) -> Result<Vec<StoredBook>, AppError> {
         let mut query = QueryBuilder::<Sqlite>::new(
-            "SELECT id, title, authorl, status \
+            "SELECT id, title, author, status \
                 FROM books \
                 WHERE 1 = 1",
         );
