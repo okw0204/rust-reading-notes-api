@@ -25,7 +25,7 @@ pub(crate) trait BookRepository: Send + Sync {
     ) -> impl Future<Output = Result<StoredBook, AppError>> + Send;
     // ANCHOR_END: insert_signature
 
-    /// 指定状態で絞った本を ID 順に返します。指定なしは全件、該当なしは空です。
+    /// 指定した読書状態と著者で絞った本を ID 順に返します。指定なしは全件、該当なしは空です。
     fn list_books(
         &self,
         status: Option<ReadingStatus>,

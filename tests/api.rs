@@ -284,11 +284,11 @@ async fn rejects_a_blank_author() {
 }
 
 #[tokio::test]
-async fn lists_books_by_reading_status_and_id_order() {
+async fn lists_books_by_filters_and_id_order() {
     let app = test_app().await;
     let mut ids = Vec::new();
     for (title, author) in [
-        ("Book C", "Author C"),
+        ("Book C", "Author A"),
         ("Book A", "Author A"),
         ("Book B", "Author B"),
     ] {
@@ -321,7 +321,7 @@ async fn lists_books_by_reading_status_and_id_order() {
         json!({
             "id": ids[0],
             "title": "Book C",
-            "author": "Author C",
+            "author": "Author A",
             "status": "reading"
         }),
         json!({
@@ -340,6 +340,9 @@ async fn lists_books_by_reading_status_and_id_order() {
     let all_desc = all_asc.iter().rev().cloned().collect::<Vec<_>>();
     let reading_asc = vec![all_asc[0].clone(), all_asc[2].clone()];
     let reading_desc = reading_asc.iter().rev().cloned().collect::<Vec<_>>();
+    let author_a_asc = vec![all_asc[0].clone(), all_asc[1].clone()];
+    let author_a_desc = author_a_asc.iter().rev().cloned().collect::<Vec<_>>();
+    let reading_by_author = vec![all_asc[0].clone()];
     let no_books = Vec::new();
 
     for (case, path, expected) in [
@@ -355,6 +358,26 @@ async fn lists_books_by_reading_status_and_id_order() {
             "reading status descending",
             "/books?status=reading&order=desc",
             reading_desc.as_slice(),
+        ),
+        (
+            "author",
+            "/books?author=Author%20A",
+            author_a_asc.as_slice(),
+        ),
+        (
+            "author descending",
+            "/books?author=Author%20A&order=desc",
+            author_a_desc.as_slice(),
+        ),
+        (
+            "reading status and author",
+            "/books?status=reading&author=Author%20A",
+            reading_by_author.as_slice(),
+        ),
+        (
+            "no matching author",
+            "/books?author=Author%20C",
+            no_books.as_slice(),
         ),
         (
             "no matching status",
