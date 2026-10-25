@@ -81,6 +81,10 @@ curl -i -X POST http://127.0.0.1:3000/reading-completions \
   -H 'content-type: application/json' \
   -d '{"items":[{"book_id":1,"body":"所有権と Future の関係を確認した"}]}'
 
+curl -i -X PATCH http://127.0.0.1:3000/books/1/notes/1 \
+  -H 'content-type: application/json' \
+  -d '{"body":"所有権と借用の違いを確認した"}'
+
 curl http://127.0.0.1:3000/books/1
 curl -i -X DELETE http://127.0.0.1:3000/books/1
 ```
@@ -97,12 +101,17 @@ curl -i -X DELETE http://127.0.0.1:3000/books/1
 | `GET` | `/books/{id}` | `200` | 本とメモを取得する |
 | `PATCH` | `/books/{id}/status` | `200` | 読書状態を変更する |
 | `POST` | `/books/{id}/notes` | `201` | メモを追加する |
+| `PATCH` | `/books/{book_id}/notes/{note_id}` | `200` | 指定した本に属するメモの本文を変更する |
 | `POST` | `/reading-completions` | `200` | 1〜8 冊を読了時のメモとともに記録する |
 | `DELETE` | `/books/{id}` | `204` | 本と関連メモを削除する（本文なし） |
 
 本の一覧は `order` を省略するか `asc` を指定すると ID 昇順、`desc` を指定すると ID 降順で返します。`status` と `order` は併用できます。`asc` と `desc` 以外の値は `400 Bad Request` と `validation_error` で拒否します。
 
 登録時の状態は `want_to_read` 固定です。状態更新は `WantToRead → Reading → Finished` の順にだけ許可します。
+
+メモの追加、本文変更、一括読了記録では、本文の前後にある空白を除去します。空白を除去した本文は Unicode スカラー値で 1〜500 文字とし、本文内の空白と改行は保持します。範囲外なら `400 Bad Request` と `validation_error` で拒否し、保存済みの本文は変更しません。以前保存された 501 文字以上のメモは引き続き取得でき、本文を変更するときだけ新しい入力規則を適用します。
+
+本文変更では、`note_id` のメモが `book_id` の本に属していない場合も `404 Not Found` とし、別の本のメモを変更しません。未読、読書中、読了のどの本でも本文を変更でき、本の読書状態やほかのメモには影響しません。
 
 | 現在の状態 ＼ 要求する状態 | `want_to_read` | `reading` | `finished` |
 | --- | --- | --- | --- |

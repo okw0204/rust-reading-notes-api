@@ -4,7 +4,8 @@ use std::future::Future;
 
 use crate::{
     domain::{
-        Author, Book, BookId, BookTitle, Finished, Note, NoteBody, ReadingStatus, StoredBook,
+        Author, Book, BookId, BookTitle, Finished, Note, NoteBody, NoteId, ReadingStatus,
+        StoredBook,
     },
     error::AppError,
 };
@@ -58,6 +59,14 @@ pub(crate) trait BookRepository: Send + Sync {
         next: StoredBook,
     ) -> impl Future<Output = Result<StoredBook, AppError>> + Send;
     // ANCHOR_END: update_status_signature
+
+    /// 指定した本に属するメモの本文を更新します。組み合わせが見つからなければ NotFound を返します。
+    fn update_note_body(
+        &self,
+        note_id: NoteId,
+        book_id: BookId,
+        body: &NoteBody,
+    ) -> impl Future<Output = Result<Note, AppError>> + Send;
 
     // ANCHOR: record_completion_contract
     /// 読書中の本を読了へ進め、メモとともに一つの保存単位で確定します。

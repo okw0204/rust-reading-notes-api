@@ -276,6 +276,24 @@ impl BookRepository for FakeBookRepository {
 
     // ANCHOR_END: fake_update
 
+    async fn update_note_body(
+        &self,
+        note_id: NoteId,
+        book_id: BookId,
+        body: &NoteBody,
+    ) -> Result<Note, AppError> {
+        let mut state = self.state.lock();
+
+        let note = state
+            .notes
+            .get_mut(&book_id.0)
+            .and_then(|notes| notes.iter_mut().find(|note| note.id == note_id))
+            .ok_or(AppError::NotFound)?;
+
+        note.body = body.clone();
+        Ok(note.clone())
+    }
+
     // ANCHOR: fake_completion_gate
     async fn record_reading_completion(
         &self,

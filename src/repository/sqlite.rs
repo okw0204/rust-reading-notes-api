@@ -54,7 +54,7 @@ impl TryFrom<NoteRow> for Note {
     fn try_from(row: NoteRow) -> Result<Self, Self::Error> {
         Ok(Self {
             id: NoteId(row.id),
-            body: NoteBody::try_from(row.body)
+            body: NoteBody::restore(row.body)
                 .map_err(|error| AppError::InvalidStoredValue(error.to_string()))?,
         })
     }
@@ -206,6 +206,30 @@ impl BookRepository for SqliteBookRepository {
 
     // ANCHOR_END: conditional_update
     // ANCHOR_END: conditional_status_sqlite
+
+    async fn update_note_body(
+        &self,
+        note_id: NoteId,
+        book_id: BookId,
+        body: &NoteBody,
+    ) -> Result<Note, AppError> {
+        let row = sqlx::query_as::<_, NoteRow>(
+            r#"
+            UPDATE notes
+            SET body = ?
+            WHERE id = ? AND book_id = ?
+            RETURNING id, body
+            "#,
+        )
+        .bind(body.as_str())
+        .bind(note_id.0)
+        .bind(book_id.0)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+        row.try_into()
+    }
 
     // ANCHOR: reading_completion_transaction
     async fn record_reading_completion(

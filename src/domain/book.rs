@@ -1,5 +1,3 @@
-use crate::domain::book;
-
 use super::{Author, BookId, BookTitle, ReadingStatus};
 
 // ANCHOR: book_typestate

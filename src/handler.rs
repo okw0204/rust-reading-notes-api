@@ -41,6 +41,11 @@ pub(crate) struct UpdateStatusRequest {
     status: String,
 }
 
+#[derive(Deserialize)]
+pub(crate) struct UpdateNoteBodyRequest {
+    body: String,
+}
+
 // ANCHOR: reading_completions_request
 #[derive(Deserialize)]
 pub(crate) struct ReadingCompletionsRequest {
@@ -243,6 +248,18 @@ pub(crate) async fn update_status<R: BookRepository>(
     Ok(Json(book.into()))
 }
 // ANCHOR_END: update_status_handler
+
+pub(crate) async fn update_note_body<R: BookRepository>(
+    State(state): State<AppState<R>>,
+    Path((book_id, note_id)): Path<(BookId, NoteId)>,
+    Json(request): Json<UpdateNoteBodyRequest>,
+) -> Result<Json<NoteResponse>, AppError> {
+    let note = state
+        .service
+        .update_note_body(note_id, book_id, request.body)
+        .await?;
+    Ok(Json(note.into()))
+}
 
 // ANCHOR: completion_handler_signature
 pub(crate) async fn record_reading_completions<R: BookRepository>(
