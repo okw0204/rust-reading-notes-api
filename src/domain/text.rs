@@ -81,6 +81,10 @@ impl TryFrom<String> for NoteBody {
 }
 
 impl NoteBody {
+    pub(crate) fn restore(value: String) -> Result<Self, InvalidText> {
+        normalize(value, "note body must not be empty").map(Self)
+    }
+
     const MAX_LENGTH: usize = 500;
 
     /// 検証済みの文字列を借用します。

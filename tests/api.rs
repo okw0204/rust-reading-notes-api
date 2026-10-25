@@ -534,6 +534,405 @@ async fn adds_a_note_to_a_book() {
 }
 
 #[tokio::test]
+async fn updates_only_a_notes_body_and_allows_the_same_update_again() {
+    let (app, pool) = test_app_and_pool().await;
+    app.clone()
+        .oneshot(json_request(
+            "POST",
+            "/books",
+            json!({"title": "Rust Atomics and Locks", "author": "Mara Bos"}),
+        ))
+        .await
+        .unwrap();
+    for body in ["Ordering rules are the key.", "Keep this note unchanged."] {
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/books/1/notes",
+                json!({"body": body}),
+            ))
+            .await
+            .unwrap();
+    }
+    let metadata_before: (i64, String) =
+        sqlx::query_as("SELECT book_id, created_at FROM notes WHERE id = 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+    for body in ["  読み直して\n分かったこと  ", "読み直して\n分かったこと"] {
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "PATCH",
+                "/books/1/notes/1",
+                json!({"body": body}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            json_body(response).await,
+            json!({"id": 1, "body": "読み直して\n分かったこと"})
+        );
+    }
+
+    let metadata_after: (i64, String) =
+        sqlx::query_as("SELECT book_id, created_at FROM notes WHERE id = 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(metadata_after, metadata_before);
+
+    let detail = app
+        .oneshot(Request::get("/books/1").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        json_body(detail).await,
+        json!({
+            "id": 1,
+            "title": "Rust Atomics and Locks",
+            "author": "Mara Bos",
+            "status": "want_to_read",
+            "notes": [
+                {"id": 1, "body": "読み直して\n分かったこと"},
+                {"id": 2, "body": "Keep this note unchanged."}
+            ]
+        })
+    );
+}
+
+#[tokio::test]
+async fn updates_notes_in_every_reading_status_including_completion_notes() {
+    let app = test_app().await;
+    for title in ["Want to read", "Reading", "Finished"] {
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/books",
+                json!({"title": title, "author": "Author"}),
+            ))
+            .await
+            .unwrap();
+    }
+    for book_id in [1, 2] {
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/books/{book_id}/notes"),
+                json!({"body": format!("note {book_id}")}),
+            ))
+            .await
+            .unwrap();
+    }
+    for book_id in [2, 3] {
+        app.clone()
+            .oneshot(json_request(
+                "PATCH",
+                &format!("/books/{book_id}/status"),
+                json!({"status": "reading"}),
+            ))
+            .await
+            .unwrap();
+    }
+    app.clone()
+        .oneshot(json_request(
+            "POST",
+            "/reading-completions",
+            json!({"items": [{"book_id": 3, "body": "completion note"}]}),
+        ))
+        .await
+        .unwrap();
+
+    for (book_id, note_id, body) in [
+        (1, 1, "updated while want_to_read"),
+        (2, 2, "updated while reading"),
+        (3, 3, "updated after completion"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "PATCH",
+                &format!("/books/{book_id}/notes/{note_id}"),
+                json!({"body": body}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            json_body(response).await,
+            json!({"id": note_id, "body": body})
+        );
+    }
+
+    for (book_id, status, note_id, body) in [
+        (1, "want_to_read", 1, "updated while want_to_read"),
+        (2, "reading", 2, "updated while reading"),
+        (3, "finished", 3, "updated after completion"),
+    ] {
+        let detail = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/books/{book_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let detail = json_body(detail).await;
+        assert_eq!(detail["status"], status);
+        assert_eq!(detail["notes"], json!([{"id": note_id, "body": body}]));
+    }
+}
+
+#[tokio::test]
+async fn rejects_a_blank_note_body_update_without_changing_the_note() {
+    let app = test_app().await;
+    app.clone()
+        .oneshot(json_request(
+            "POST",
+            "/books",
+            json!({"title": "Rust Atomics and Locks", "author": "Mara Bos"}),
+        ))
+        .await
+        .unwrap();
+    app.clone()
+        .oneshot(json_request(
+            "POST",
+            "/books/1/notes",
+            json!({"body": "Ordering rules are the key."}),
+        ))
+        .await
+        .unwrap();
+
+    let response = app
+        .clone()
+        .oneshot(json_request(
+            "PATCH",
+            "/books/1/notes/1",
+            json!({"body": " \n\t"}),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        json_body(response).await,
+        json!({
+            "error": {
+                "code": "validation_error",
+                "message": "note body must not be empty"
+            }
+        })
+    );
+
+    let detail = app
+        .oneshot(Request::get("/books/1").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        json_body(detail).await["notes"],
+        json!([{"id": 1, "body": "Ordering rules are the key."}])
+    );
+}
+
+#[tokio::test]
+async fn enforces_the_note_body_boundary_before_looking_up_the_target() {
+    let app = test_app().await;
+    app.clone()
+        .oneshot(json_request(
+            "POST",
+            "/books",
+            json!({"title": "Rust Atomics and Locks", "author": "Mara Bos"}),
+        ))
+        .await
+        .unwrap();
+    app.clone()
+        .oneshot(json_request(
+            "POST",
+            "/books/1/notes",
+            json!({"body": "original"}),
+        ))
+        .await
+        .unwrap();
+
+    let expected = format!("{}\n{}", "あ".repeat(250), "い".repeat(249));
+    let response = app
+        .clone()
+        .oneshot(json_request(
+            "PATCH",
+            "/books/1/notes/1",
+            json!({"body": format!("  {expected}  ")}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        json_body(response).await,
+        json!({"id": 1, "body": expected})
+    );
+
+    for path in ["/books/1/notes/1", "/books/999/notes/999"] {
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "PATCH",
+                path,
+                json!({"body": "う".repeat(501)}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            json_body(response).await,
+            json!({
+                "error": {
+                    "code": "validation_error",
+                    "message": "note body must be 500 characters or fewer"
+                }
+            })
+        );
+    }
+
+    let detail = app
+        .oneshot(Request::get("/books/1").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(json_body(detail).await["notes"][0]["body"], expected);
+}
+
+#[tokio::test]
+async fn does_not_update_a_note_through_a_different_book() {
+    let app = test_app().await;
+    for title in ["Rust Atomics and Locks", "Programming Rust"] {
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/books",
+                json!({"title": title, "author": "Mara Bos"}),
+            ))
+            .await
+            .unwrap();
+    }
+    app.clone()
+        .oneshot(json_request(
+            "POST",
+            "/books/1/notes",
+            json!({"body": "Ordering rules are the key."}),
+        ))
+        .await
+        .unwrap();
+
+    for path in [
+        "/books/999/notes/1",
+        "/books/1/notes/999",
+        "/books/2/notes/1",
+    ] {
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "PATCH",
+                path,
+                json!({"body": "This must not be saved."}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            json_body(response).await,
+            json!({
+                "error": {
+                    "code": "not_found",
+                    "message": "resource not found"
+                }
+            })
+        );
+    }
+
+    for (book_id, expected_notes) in [
+        (1, json!([{"id": 1, "body": "Ordering rules are the key."}])),
+        (2, json!([])),
+    ] {
+        let detail = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/books/{book_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(json_body(detail).await["notes"], expected_notes);
+    }
+}
+
+#[tokio::test]
+async fn preserves_a_legacy_long_note_until_a_valid_update_succeeds() {
+    let (app, pool) = test_app_and_pool().await;
+    app.clone()
+        .oneshot(json_request(
+            "POST",
+            "/books",
+            json!({"title": "Rust Atomics and Locks", "author": "Mara Bos"}),
+        ))
+        .await
+        .unwrap();
+    let original = "あ".repeat(501);
+    sqlx::query("INSERT INTO notes (book_id, body) VALUES (1, ?)")
+        .bind(&original)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let detail = app
+        .clone()
+        .oneshot(Request::get("/books/1").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(detail.status(), StatusCode::OK);
+    assert_eq!(json_body(detail).await["notes"][0]["body"], original);
+
+    let response = app
+        .clone()
+        .oneshot(json_request(
+            "PATCH",
+            "/books/1/notes/1",
+            json!({"body": "い".repeat(501)}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let detail = app
+        .clone()
+        .oneshot(Request::get("/books/1").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(json_body(detail).await["notes"][0]["body"], original);
+
+    let response = app
+        .clone()
+        .oneshot(json_request(
+            "PATCH",
+            "/books/1/notes/1",
+            json!({"body": "読み直して分かったこと"}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let detail = app
+        .oneshot(Request::get("/books/1").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        json_body(detail).await["notes"],
+        json!([{"id": 1, "body": "読み直して分かったこと"}])
+    );
+}
+
+#[tokio::test]
 async fn rejects_a_blank_note() {
     let app = test_app().await;
     let create_book = Request::post("/books")

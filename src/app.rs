@@ -61,6 +61,10 @@ where
             "/books/{id}/notes",
             axum::routing::post(handler::add_note::<R>),
         )
+        .route(
+            "/books/{book_id}/notes/{note_id}",
+            axum::routing::patch(handler::update_note_body::<R>),
+        )
         // ANCHOR: completion_route
         .route(
             "/reading-completions",

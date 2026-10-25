@@ -15,7 +15,7 @@ pub use text::{Author, BookTitle, InvalidText, NoteBody};
 // i64 のまま扱わず、将来 NoteId と取り違えたときにコンパイラが検出できるようにする。
 pub struct BookId(pub i64);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(transparent)]
 pub(crate) struct NoteId(pub(crate) i64);
 

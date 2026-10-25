@@ -4,7 +4,9 @@ use futures_util::stream::{FuturesUnordered, StreamExt};
 use std::collections::HashSet;
 
 use crate::{
-    domain::{Author, BookDetail, BookId, BookTitle, Note, NoteBody, ReadingStatus, StoredBook},
+    domain::{
+        Author, BookDetail, BookId, BookTitle, Note, NoteBody, NoteId, ReadingStatus, StoredBook,
+    },
     error::AppError,
     repository::{BookIdOrder, BookRepository},
 };
@@ -150,6 +152,18 @@ impl<R: BookRepository> ReadingService<R> {
     }
 
     // ANCHOR_END: update_status_service
+
+    pub(crate) async fn update_note_body(
+        &self,
+        note_id: NoteId,
+        book_id: BookId,
+        body: String,
+    ) -> Result<Note, AppError> {
+        let body = NoteBody::try_from(body)?;
+        self.repository
+            .update_note_body(note_id, book_id, &body)
+            .await
+    }
 
     // ANCHOR: reading_completions_service
     pub(crate) async fn record_reading_completions(
