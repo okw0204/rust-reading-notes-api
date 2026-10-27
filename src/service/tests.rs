@@ -245,6 +245,68 @@ async fn updates_a_note_through_the_fake_repository_contract() {
 }
 
 #[tokio::test]
+async fn deletes_a_note_through_the_fake_repository_contract() {
+    let service = ReadingService::new(FakeBookRepository::default());
+    let first = service
+        .create_book(CreateBook {
+            title: "First".to_owned(),
+            author: "Author".to_owned(),
+        })
+        .await
+        .unwrap();
+    let second = service
+        .create_book(CreateBook {
+            title: "Second".to_owned(),
+            author: "Author".to_owned(),
+        })
+        .await
+        .unwrap();
+    let deleted = service
+        .add_note(
+            first.id(),
+            AddNote {
+                body: "delete".to_owned(),
+            },
+        )
+        .await
+        .unwrap();
+    let remaining = service
+        .add_note(
+            first.id(),
+            AddNote {
+                body: "remain".to_owned(),
+            },
+        )
+        .await
+        .unwrap();
+
+    service.delete_note(deleted.id, first.id()).await.unwrap();
+    let first_detail = service.get_book(first.id()).await.unwrap();
+    assert_eq!(first_detail.book.id(), first.id());
+    assert_eq!(first_detail.book.status(), ReadingStatus::WantToRead);
+    assert_eq!(first_detail.notes.len(), 1);
+    assert_eq!(first_detail.notes[0].id, remaining.id);
+    assert_eq!(first_detail.notes[0].body.as_str(), "remain");
+
+    let error = service
+        .delete_note(remaining.id, second.id())
+        .await
+        .unwrap_err();
+    assert!(matches!(error, AppError::NotFound));
+    let first_detail = service.get_book(first.id()).await.unwrap();
+    assert_eq!(first_detail.notes.len(), 1);
+    assert_eq!(first_detail.notes[0].id, remaining.id);
+    assert!(
+        service
+            .get_book(second.id())
+            .await
+            .unwrap()
+            .notes
+            .is_empty()
+    );
+}
+
+#[tokio::test]
 async fn preserves_a_database_save_error_and_the_stored_state() {
     let fake = FakeBookRepository::default();
     let service = ReadingService::new(fake.clone());
