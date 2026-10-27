@@ -1,7 +1,5 @@
 //! service が利用する永続化の契約を定義します。
 
-use std::future::Future;
-
 use crate::{
     domain::{
         Author, Book, BookId, BookTitle, Finished, Note, NoteBody, NoteId, ReadingStatus,
@@ -78,6 +76,13 @@ pub(crate) trait BookRepository: Send + Sync {
         body: &NoteBody,
     ) -> impl Future<Output = Result<(StoredBook, Note), AppError>> + Send;
     // ANCHOR_END: record_completion_contract
+
+    /// 指定したメモを削除します。メモが無ければ NotFound を返します。
+    fn delete_note(
+        &self,
+        note_id: NoteId,
+        book_id: BookId,
+    ) -> impl Future<Output = Result<(), AppError>> + Send;
 
     /// 本と対応するメモを削除します。本がなければ NotFound を返します。
     fn delete_book(&self, id: BookId) -> impl Future<Output = Result<(), AppError>> + Send;

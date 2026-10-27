@@ -271,6 +271,20 @@ impl BookRepository for SqliteBookRepository {
     }
     // ANCHOR_END: reading_completion_transaction
 
+    async fn delete_note(&self, note_id: NoteId, book_id: BookId) -> Result<(), AppError> {
+        let result = sqlx::query("DELETE FROM notes WHERE id = ? AND book_id = ?")
+            .bind(note_id.0)
+            .bind(book_id.0)
+            .execute(&self.pool)
+            .await?;
+
+        if result.rows_affected() == 0 {
+            return Err(AppError::NotFound);
+        }
+
+        Ok(())
+    }
+
     async fn delete_book(&self, id: BookId) -> Result<(), AppError> {
         let result = sqlx::query("DELETE FROM books WHERE id = ?")
             .bind(id.0)

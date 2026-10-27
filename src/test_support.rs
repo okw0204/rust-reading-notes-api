@@ -341,6 +341,23 @@ impl BookRepository for FakeBookRepository {
         // ANCHOR_END: fake_completion_save
     }
 
+    async fn delete_note(&self, note_id: NoteId, book_id: BookId) -> Result<(), AppError> {
+        let mut state = self.state.lock();
+        if !state.books.contains_key(&book_id.0) {
+            return Err(AppError::NotFound);
+        }
+
+        let notes = state.notes.get_mut(&book_id.0).ok_or(AppError::NotFound)?;
+
+        let position = notes
+            .iter()
+            .position(|note| note.id == note_id)
+            .ok_or(AppError::NotFound)?;
+
+        notes.remove(position);
+        Ok(())
+    }
+
     async fn delete_book(&self, id: BookId) -> Result<(), AppError> {
         let mut state = self.state.lock();
         state.books.remove(&id.0).ok_or(AppError::NotFound)?;

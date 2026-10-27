@@ -242,6 +242,14 @@ impl<R: BookRepository> ReadingService<R> {
     // ANCHOR_END: single_completion_future
     // ANCHOR_END: reading_completions_service
 
+    pub(crate) async fn delete_note(
+        &self,
+        note_id: NoteId,
+        book_id: BookId,
+    ) -> Result<(), AppError> {
+        self.repository.delete_note(note_id, book_id).await
+    }
+
     pub(crate) async fn delete_book(&self, book_id: BookId) -> Result<(), AppError> {
         self.repository.delete_book(book_id).await
     }

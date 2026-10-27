@@ -293,6 +293,14 @@ pub(crate) async fn record_reading_completions<R: BookRepository>(
     // ANCHOR_END: completion_handler_response
 }
 
+pub(crate) async fn delete_note<R: BookRepository>(
+    State(state): State<AppState<R>>,
+    Path((book_id, note_id)): Path<(BookId, NoteId)>,
+) -> Result<StatusCode, AppError> {
+    state.service.delete_note(note_id, book_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 pub(crate) async fn delete_book<R: BookRepository>(
     State(state): State<AppState<R>>,
     Path(book_id): Path<BookId>,
