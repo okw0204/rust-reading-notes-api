@@ -1063,6 +1063,323 @@ async fn returns_not_found_when_updating_an_unknown_book() {
     );
 }
 
+#[tokio::test]
+async fn deletes_only_the_target_note() {
+    let app = test_app().await;
+    for (title, author) in [
+        ("Rust Atomics and Locks", "Mara Bos"),
+        ("Programming Rust", "Jim Blandy"),
+    ] {
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/books",
+                json!({"title": title, "author": author}),
+            ))
+            .await
+            .unwrap();
+    }
+    for (book_id, body) in [
+        (1, "Remove this note."),
+        (1, "Keep this note first."),
+        (1, "Keep this note second."),
+        (2, "Keep the other book's note."),
+    ] {
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/books/{book_id}/notes"),
+                json!({"body": body}),
+            ))
+            .await
+            .unwrap();
+    }
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::delete("/books/1/notes/1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert!(
+        response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .is_empty()
+    );
+
+    for (book_id, expected) in [
+        (
+            1,
+            json!({
+                "id": 1,
+                "title": "Rust Atomics and Locks",
+                "author": "Mara Bos",
+                "status": "want_to_read",
+                "notes": [
+                    {"id": 2, "body": "Keep this note first."},
+                    {"id": 3, "body": "Keep this note second."}
+                ]
+            }),
+        ),
+        (
+            2,
+            json!({
+                "id": 2,
+                "title": "Programming Rust",
+                "author": "Jim Blandy",
+                "status": "want_to_read",
+                "notes": [{"id": 4, "body": "Keep the other book's note."}]
+            }),
+        ),
+    ] {
+        let detail = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/books/{book_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(json_body(detail).await, expected);
+    }
+}
+
+#[tokio::test]
+async fn deletes_notes_without_changing_reading_or_finished_status() {
+    let app = test_app().await;
+    for title in ["Reading book", "Finished book"] {
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/books",
+                json!({"title": title, "author": "Author"}),
+            ))
+            .await
+            .unwrap();
+    }
+    for book_id in [1, 2] {
+        app.clone()
+            .oneshot(json_request(
+                "PATCH",
+                &format!("/books/{book_id}/status"),
+                json!({"status": "reading"}),
+            ))
+            .await
+            .unwrap();
+    }
+    app.clone()
+        .oneshot(json_request(
+            "POST",
+            "/books/1/notes",
+            json!({"body": "A note on the reading book"}),
+        ))
+        .await
+        .unwrap();
+    app.clone()
+        .oneshot(json_request(
+            "POST",
+            "/reading-completions",
+            json!({"items": [{"book_id": 2, "body": "A completion note"}]}),
+        ))
+        .await
+        .unwrap();
+
+    for path in ["/books/1/notes/1", "/books/2/notes/2"] {
+        let response = app
+            .clone()
+            .oneshot(Request::delete(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    }
+
+    for (book_id, expected_status) in [(1, "reading"), (2, "finished")] {
+        let detail = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/books/{book_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let detail = json_body(detail).await;
+        assert_eq!(detail["status"], expected_status);
+        assert_eq!(detail["notes"], json!([]));
+    }
+}
+
+#[tokio::test]
+async fn rejects_note_deletion_when_the_book_and_note_do_not_match() {
+    let app = test_app().await;
+    for title in ["First book", "Second book"] {
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/books",
+                json!({"title": title, "author": "Author"}),
+            ))
+            .await
+            .unwrap();
+    }
+    app.clone()
+        .oneshot(json_request(
+            "POST",
+            "/books/1/notes",
+            json!({"body": "This note must remain."}),
+        ))
+        .await
+        .unwrap();
+
+    for path in [
+        "/books/999/notes/1",
+        "/books/1/notes/999",
+        "/books/2/notes/1",
+    ] {
+        let response = app
+            .clone()
+            .oneshot(Request::delete(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            json_body(response).await,
+            json!({
+                "error": {
+                    "code": "not_found",
+                    "message": "resource not found"
+                }
+            })
+        );
+    }
+
+    for (book_id, expected_notes) in [
+        (1, json!([{"id": 1, "body": "This note must remain."}])),
+        (2, json!([])),
+    ] {
+        let detail = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/books/{book_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(json_body(detail).await["notes"], expected_notes);
+    }
+}
+
+#[tokio::test]
+async fn rejects_deleting_a_note_twice_and_non_numeric_paths() {
+    let app = test_app().await;
+    app.clone()
+        .oneshot(json_request(
+            "POST",
+            "/books",
+            json!({"title": "Book", "author": "Author"}),
+        ))
+        .await
+        .unwrap();
+    app.clone()
+        .oneshot(json_request(
+            "POST",
+            "/books/1/notes",
+            json!({"body": "Delete once"}),
+        ))
+        .await
+        .unwrap();
+    app.clone()
+        .oneshot(
+            Request::delete("/books/1/notes/1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::delete("/books/1/notes/1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        json_body(response).await,
+        json!({
+            "error": {
+                "code": "not_found",
+                "message": "resource not found"
+            }
+        })
+    );
+
+    for path in ["/books/not-a-number/notes/1", "/books/1/notes/not-a-number"] {
+        let response = app
+            .clone()
+            .oneshot(Request::delete(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+}
+
+#[tokio::test]
+async fn hides_database_error_details_when_deleting_a_note() {
+    let (app, pool) = test_app_and_pool().await;
+    app.clone()
+        .oneshot(json_request(
+            "POST",
+            "/books",
+            json!({"title": "Book", "author": "Author"}),
+        ))
+        .await
+        .unwrap();
+    app.clone()
+        .oneshot(json_request(
+            "POST",
+            "/books/1/notes",
+            json!({"body": "A note"}),
+        ))
+        .await
+        .unwrap();
+    pool.close().await;
+
+    let response = app
+        .oneshot(
+            Request::delete("/books/1/notes/1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(
+        json_body(response).await,
+        json!({
+            "error": {
+                "code": "internal_error",
+                "message": "internal server error"
+            }
+        })
+    );
+}
+
 // ANCHOR: api_delete_test
 #[tokio::test]
 async fn deletes_a_book_and_its_notes() {

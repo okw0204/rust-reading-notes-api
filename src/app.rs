@@ -63,7 +63,7 @@ where
         )
         .route(
             "/books/{book_id}/notes/{note_id}",
-            axum::routing::patch(handler::update_note_body::<R>),
+            axum::routing::patch(handler::update_note_body::<R>).delete(handler::delete_note::<R>),
         )
         // ANCHOR: completion_route
         .route(
